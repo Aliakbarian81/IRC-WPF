@@ -293,7 +293,15 @@ namespace IRC_WPF
             Grid.SetRow(chatBox, 0);
 
             DockPanel messagePanel = new DockPanel { Margin = new Thickness(5) };
-            TextBox messageInput = new TextBox { Name = "MessageInput", Margin = new Thickness(0, 0, 5, 0) };
+
+            // استفاده از ارتفاع و عرض ثابت برای اینپوت
+            TextBox messageInput = new TextBox
+            {
+                Name = "MessageInput",
+                Margin = new Thickness(0, 0, 5, 0),
+                Height = 20, // ارتفاع ثابت
+                Width = 400  // عرض ثابت یا پویا
+            };
             DockPanel.SetDock(messageInput, Dock.Left);
 
             Button sendButton = new Button { Content = "Send", Width = 75 };
@@ -319,6 +327,7 @@ namespace IRC_WPF
             ChatTabs.Items.Add(newTab);
             ChatTabs.SelectedItem = newTab;
         }
+
 
 
         // close tab
