@@ -64,6 +64,13 @@ namespace IRC_WPF
                         await writer.WriteLineAsync("LIST");
                         listRequested = true;
                     }
+
+                    // فیلتر کردن پیام‌های نامربوط
+                    if (response.StartsWith(":") && response.Contains("are supported by this server"))
+                    {
+                        continue; // پیام‌های غیرمرتبط را نادیده بگیر
+                    }
+
                     if (response.Contains("PRIVMSG"))
                     {
                         string sender = GetUserFromResponse(response);
@@ -106,7 +113,6 @@ namespace IRC_WPF
                         string[] usersArray = usersPart.Split(' '); // جدا کردن کاربران
                         AddUsers(usersArray); // اضافه کردن کاربران به لیست
                     }
-
                     else if (response.Contains("JOIN")) // User joins channel
                     {
                         string user = GetUserFromResponse(response);
@@ -135,10 +141,10 @@ namespace IRC_WPF
                     {
                         continue;
                     }
-
                 }
             }
         }
+
 
 
         private void AppendMessageToTab(string header, string message)
