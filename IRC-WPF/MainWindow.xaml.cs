@@ -352,13 +352,26 @@ namespace IRC_WPF
         }
 
 
-        private void ChannelChatMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void ChannelChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (ChannelsList.SelectedItem is string selectedChannel)
             {
-                CreateChatTab($"Channel: {selectedChannel}");
+                // ارسال دستور JOIN به سرور
+                await writer.WriteLineAsync($"JOIN {selectedChannel}");
+                currentChannel = selectedChannel;
+
+                // ایجاد تب جدید برای کانال
+                Dispatcher.Invoke(() =>
+                {
+                    ChatBox.AppendText($"Joining channel: {selectedChannel}\n");
+                    CreateChatTab(selectedChannel);
+                });
+
+                // درخواست لیست کاربران کانال
+                await writer.WriteLineAsync($"NAMES {selectedChannel}");
             }
         }
+
 
         // sorting chanels and users list
         private void SortListBox(ListBox listBox)
