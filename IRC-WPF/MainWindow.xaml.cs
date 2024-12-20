@@ -64,37 +64,17 @@ namespace IRC_WPF
                         await writer.WriteLineAsync("LIST");
                         listRequested = true;
                     }
-
                     if (response.Contains("PRIVMSG"))
                     {
-
                         string sender = GetUserFromResponse(response);
+                        string target = response.Split(' ')[2]; // کانال یا کاربر
                         string message = response.Substring(response.IndexOf(':', 1) + 1);
 
                         Dispatcher.Invoke(() =>
                         {
-                            // چک کن آیا تب مربوطه موجوده
-                            TabItem existingTab = ChatTabs.Items.Cast<TabItem>()
-                                .FirstOrDefault(tab => tab.Header.ToString() == sender);
-
-                            TextBox chatBox;
-
-                            if (existingTab == null)
-                            {
-                                // ایجاد تب جدید
-                                CreateChatTab(sender);
-                                existingTab = ChatTabs.Items.Cast<TabItem>().Last();
-                            }
-
-                            chatBox = existingTab.Content as TextBox;
-                            if (chatBox != null)
-                            {
-                                chatBox.AppendText($"{sender}: {message}\n");
-                                chatBox.ScrollToEnd();
-                            }
+                            AppendMessageToTab(target == currentChannel ? currentChannel : sender, $"{sender}: {message}");
                         });
                     }
-
 
                     Dispatcher.Invoke(() => ChatBox.AppendText(response + "\n"));
 
@@ -163,18 +143,23 @@ namespace IRC_WPF
 
         private void AppendMessageToTab(string header, string message)
         {
-            foreach (TabItem tab in ChatTabs.Items)
+            TabItem existingTab = ChatTabs.Items.Cast<TabItem>().FirstOrDefault(tab => tab.Header.ToString() == header);
+
+            if (existingTab == null)
             {
-                if (tab.Header.ToString() == header)
-                {
-                    TextBox chatBox = tab.Content as TextBox;
-                    chatBox?.AppendText($"{header}: {message}\n");
-                    return;
-                }
+                CreateChatTab(header);
+                existingTab = ChatTabs.Items.Cast<TabItem>().Last();
             }
 
-            CreateChatTab(header);
-            AppendMessageToTab(header, message);
+            if (existingTab.Content is Grid grid)
+            {
+                TextBox chatBox = grid.Children.OfType<TextBox>().FirstOrDefault();
+                if (chatBox != null)
+                {
+                    chatBox.AppendText(message + "\n");
+                    chatBox.ScrollToEnd();
+                }
+            }
         }
 
 
@@ -236,37 +221,6 @@ namespace IRC_WPF
             }
         }
 
-        // send message function
-        private async void SendButton_Click(object sender, RoutedEventArgs e)
-        {
-            string message = MessageInput.Text;
-            if (string.IsNullOrEmpty(message)) return;
-
-            string target = currentChannel;
-            TabItem selectedTab = null;
-
-            if (ChatTabs.SelectedItem is TabItem tab)
-            {
-                selectedTab = tab;
-                target = selectedTab.Header.ToString();
-            }
-
-            if (!string.IsNullOrEmpty(target))
-            {
-                await writer.WriteLineAsync($"PRIVMSG {target} :{message}");
-                Dispatcher.Invoke(() =>
-                {
-                    if (selectedTab != null)
-                    {
-                        TextBox chatBox = selectedTab.Content as TextBox;
-                        chatBox?.AppendText($"You: {message}\n");
-                        MessageInput.Clear();
-                    }
-                });
-            }
-        }
-
-
 
         private async void ChannelsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
@@ -319,26 +273,10 @@ namespace IRC_WPF
         // create new tab for chat message
         private void CreateChatTab(string header)
         {
-            if (string.IsNullOrEmpty(header) || header.Trim() == ":")
-            {
-                return;
-            }
-
-            TabItem existingTab = ChatTabs.Items.Cast<TabItem>()
-                .FirstOrDefault(tab => tab.Header.ToString() == header);
-
-            if (existingTab != null)
-            {
-                ChatTabs.SelectedItem = existingTab;
-                return;
-            }
-
-            // ساختار کلی تب جدید
             Grid chatGrid = new Grid();
-            chatGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // چت باکس
-            chatGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // بخش ارسال پیام
+            chatGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            chatGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-            // چت باکس
             TextBox chatBox = new TextBox
             {
                 IsReadOnly = true,
@@ -348,24 +286,14 @@ namespace IRC_WPF
             };
             Grid.SetRow(chatBox, 0);
 
-            // بخش ارسال پیام
             DockPanel messagePanel = new DockPanel { Margin = new Thickness(5) };
-
-            TextBox messageInput = new TextBox
-            {
-                Name = "MessageInput",
-                Margin = new Thickness(0, 0, 5, 0)
-            };
+            TextBox messageInput = new TextBox { Name = "MessageInput", Margin = new Thickness(0, 0, 5, 0) };
             DockPanel.SetDock(messageInput, Dock.Left);
 
-            Button sendButton = new Button
-            {
-                Content = "Send",
-                Width = 75
-            };
+            Button sendButton = new Button { Content = "Send", Width = 75 };
             sendButton.Click += (sender, e) =>
             {
-                SendMessageToTab(header, messageInput.Text, chatBox);
+                SendMessage(header, messageInput.Text);
                 messageInput.Clear();
             };
 
@@ -373,7 +301,6 @@ namespace IRC_WPF
             messagePanel.Children.Add(sendButton);
             Grid.SetRow(messagePanel, 1);
 
-            // افزودن به گرید
             chatGrid.Children.Add(chatBox);
             chatGrid.Children.Add(messagePanel);
 
@@ -447,6 +374,36 @@ namespace IRC_WPF
                 }
             });
         }
+
+
+        private async void SendMessage(string target, string message)
+        {
+            if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(message))
+                return;
+
+            await writer.WriteLineAsync($"PRIVMSG {target} :{message}");
+            Dispatcher.Invoke(() =>
+            {
+                AppendMessageToTab(target, $"You: {message}");
+            });
+        }
+
+        private void SendButton_Click(object sender, RoutedEventArgs e)
+        {
+            string message = MessageInput.Text;
+            if (string.IsNullOrEmpty(message)) return;
+
+            string target = currentChannel; // کانال فعلی یا کاربر انتخاب‌شده
+            if (ChatTabs.SelectedItem is TabItem selectedTab)
+            {
+                target = selectedTab.Header.ToString();
+            }
+
+            SendMessage(target, message);
+            MessageInput.Clear();
+        }
+
+
 
 
 
