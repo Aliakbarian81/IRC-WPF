@@ -26,30 +26,9 @@ namespace IRC_WPF
         public MainWindow()
         {
             InitializeComponent();
-            ConnectToServer();
-
         }
-
-        private async void ConnectToServer()
-        {
-            string server = "irc.unibg.org";
-            int port = 6667;
-            string nickname = "mamatiiiii";
-
-            TcpClient client = new TcpClient(server, port);
-            NetworkStream stream = client.GetStream();
-            writer = new StreamWriter(stream) { AutoFlush = true };
-            reader = new StreamReader(stream);
-
-            await writer.WriteLineAsync($"NICK {nickname}");
-            await writer.WriteLineAsync($"USER {nickname} 0 * :{nickname}");
-
-            await writer.WriteLineAsync("LIST");
-
-
-            _ = Task.Run(() => ListenForMessages());
-        }
-
+        
+        // infinity loop for listen server meessages
         private async Task ListenForMessages()
         {
             bool listRequested = false;
@@ -66,10 +45,10 @@ namespace IRC_WPF
                     }
 
                     // فیلتر کردن پیام‌های نامربوط
-                    if (response.StartsWith(":") && response.Contains("are supported by this server"))
-                    {
-                        continue; // پیام‌های غیرمرتبط را نادیده بگیر
-                    }
+                    //if (response.StartsWith(":") && response.Contains("are supported by this server"))
+                    //{
+                    //    continue;
+                    //}
 
                     if (response.Contains("PRIVMSG"))
                     {
@@ -141,14 +120,53 @@ namespace IRC_WPF
                     {
                         continue;
                     }
+                    if (response.Contains("DCC SEND"))
+                    {
+                        // استخراج اطلاعات DCC
+                        string[] parts = response.Split(' ');
+                        if (parts.Length >= 7)
+                        {
+                            string sender = GetUserFromResponse(response);
+                            string fileName = parts[4].TrimStart(':');
+                            string ipAddress = IntegerToIP(Convert.ToInt64(parts[5]));
+                            int port = int.Parse(parts[6]);
+                            long fileSize = long.Parse(parts[7]);
+
+                            // اعلان به کاربر
+                            Dispatcher.Invoke(() =>
+                            {
+                                AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
+                                if (MessageBox.Show($"Do you want to accept the file '{fileName}' from {sender}?",
+                                                    "File Transfer Request", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                                {
+                                    _ = ReceiveFile(fileName, ipAddress, port, fileSize, sender);
+                                }
+                            });
+                        }
+                    }
+
+
+
                 }
             }
         }
 
 
 
+
+
+
+
+
+
+
         private void AppendMessageToTab(string header, string message)
         {
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                return;
+            }
+
             TabItem existingTab = ChatTabs.Items.Cast<TabItem>().FirstOrDefault(tab => tab.Header.ToString() == header);
 
             if (existingTab == null)
@@ -167,6 +185,7 @@ namespace IRC_WPF
                 }
             }
         }
+
 
 
         // extract users nickname
@@ -311,6 +330,13 @@ namespace IRC_WPF
                 messageInput.Clear();
             };
 
+            Button fileButton = new Button { Content = "Send File", Width = 80, Margin = new Thickness(5, 0, 0, 0) };
+            fileButton.Click += (sender, e) =>
+            {
+                SendFileWithDCC(header);
+            };
+
+            messagePanel.Children.Add(fileButton);
             messagePanel.Children.Add(messageInput);
             messagePanel.Children.Add(sendButton);
             Grid.SetRow(messagePanel, 1);
@@ -431,6 +457,177 @@ namespace IRC_WPF
             MessageInput.Clear();
         }
 
+
+        private async void ConnectMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var connectWindow = new ConnectWindow();
+            if (connectWindow.ShowDialog() == true)
+            {
+                string serverAddress = connectWindow.ServerAddress;
+                int port = connectWindow.Port;
+                string nickname = connectWindow.Nickname;
+
+                // اتصال به سرور با اطلاعات وارد شده
+                try
+                {
+                    TcpClient client = new TcpClient(serverAddress, port);
+                    NetworkStream stream = client.GetStream();
+                    writer = new StreamWriter(stream) { AutoFlush = true };
+                    reader = new StreamReader(stream);
+
+                    await writer.WriteLineAsync($"NICK {nickname}");
+                    await writer.WriteLineAsync($"USER {nickname} 0 * :{nickname}");
+                    _ = Task.Run(() => ListenForMessages());
+
+                    MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+        private void ExitMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            Application.Current.Shutdown();
+        }
+
+        private void AboutMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            MessageBox.Show("IRC Chat Application\nVersion 1.0", "About", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private async void SendFileWithDCC(string recipient)
+        {
+            var openFileDialog = new Microsoft.Win32.OpenFileDialog();
+            if (openFileDialog.ShowDialog() == true)
+            {
+                string filePath = openFileDialog.FileName;
+                string fileName = Path.GetFileName(filePath);
+                byte[] fileData = File.ReadAllBytes(filePath);
+
+                // ایجاد یک سرور TCP برای انتقال فایل
+                TcpListener tcpListener = new TcpListener(System.Net.IPAddress.Any, 0);
+                tcpListener.Start();
+
+                // دریافت پورت محلی
+                int localPort = ((System.Net.IPEndPoint)tcpListener.LocalEndpoint).Port;
+                string localIPAddress = GetLocalIPAddress();
+
+                // ارسال درخواست DCC به گیرنده
+                string dccRequest = $"PRIVMSG {recipient} :\u0001DCC SEND {fileName} {IPToInteger(localIPAddress)} {localPort} {fileData.Length}\u0001";
+                await writer.WriteLineAsync(dccRequest);
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"DCC request sent for file: {fileName}");
+                });
+
+                // منتظر اتصال گیرنده
+                TcpClient tcpClient = await tcpListener.AcceptTcpClientAsync();
+
+                // ارسال فایل
+                using (NetworkStream networkStream = tcpClient.GetStream())
+                {
+                    await networkStream.WriteAsync(fileData, 0, fileData.Length);
+                }
+
+                tcpClient.Close();
+                tcpListener.Stop();
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"File {fileName} sent successfully!");
+                });
+            }
+        }
+        private int IPToInteger(string ipAddress)
+        {
+            string[] ipParts = ipAddress.Split('.');
+            return (int.Parse(ipParts[0]) << 24) |
+                   (int.Parse(ipParts[1]) << 16) |
+                   (int.Parse(ipParts[2]) << 8) |
+                   int.Parse(ipParts[3]);
+        }
+
+        private string GetLocalIPAddress()
+        {
+            var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+            foreach (var ip in host.AddressList)
+            {
+                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    return ip.ToString();
+                }
+            }
+            throw new Exception("Local IP Address Not Found!");
+        }
+
+
+        private string IntegerToIP(long ipAddress)
+        {
+            return string.Join(".", new[]
+            {
+        (ipAddress >> 24) & 0xFF,
+        (ipAddress >> 16) & 0xFF,
+        (ipAddress >> 8) & 0xFF,
+        ipAddress & 0xFF
+    });
+        }
+
+
+        private async Task ReceiveFile(string fileName, string ipAddress, int port, long fileSize, string sender)
+        {
+            try
+            {
+                using (TcpClient client = new TcpClient())
+                {
+                    await client.ConnectAsync(ipAddress, port);
+                    using (NetworkStream networkStream = client.GetStream())
+                    {
+                        // مسیر ذخیره فایل
+                        string savePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), fileName);
+
+                        using (FileStream fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write))
+                        {
+                            byte[] buffer = new byte[8192];
+                            long totalReceived = 0;
+
+                            while (totalReceived < fileSize)
+                            {
+                                int bytesRead = await networkStream.ReadAsync(buffer, 0, buffer.Length);
+                                if (bytesRead == 0)
+                                    break;
+
+                                await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                totalReceived += bytesRead;
+
+                                // نمایش پیشرفت دانلود
+                                Dispatcher.Invoke(() =>
+                                {
+                                    AppendMessageToTab(sender, $"Receiving file: {fileName} ({totalReceived * 100 / fileSize}%)");
+                                });
+                            }
+                        }
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            AppendMessageToTab(sender, $"File received and saved as: {fileName}");
+                            MessageBox.Show($"File '{fileName}' received and saved in Documents.", "File Received", MessageBoxButton.OK, MessageBoxImage.Information);
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(sender, $"Failed to receive file '{fileName}': {ex.Message}");
+                    MessageBox.Show($"Failed to receive file '{fileName}': {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
+            }
+        }
 
 
 

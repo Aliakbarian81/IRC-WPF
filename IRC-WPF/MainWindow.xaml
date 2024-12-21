@@ -7,14 +7,28 @@
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     
+    
+    
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="200" />
         </Grid.ColumnDefinitions>
+        
+        
+        <Menu VerticalAlignment="Top">
+            <MenuItem Header="File">
+                <MenuItem Header="Connect to Server" Click="ConnectMenuItem_Click" />
+                <Separator />
+                <MenuItem Header="Exit" Click="ExitMenuItem_Click" />
+            </MenuItem>
+            <MenuItem Header="Help">
+                <MenuItem Header="About" Click="AboutMenuItem_Click" />
+            </MenuItem>
+        </Menu>
 
         <!-- بخش چت -->
-        <TabControl Name="ChatTabs" Margin="10" Grid.Column="0" Width="560">
+        <TabControl Name="ChatTabs" Margin="22" Grid.Column="0" Width="560">
             <TabControl.Resources>
                 <Style TargetType="TabItem">
                     <Setter Property="HeaderTemplate">
