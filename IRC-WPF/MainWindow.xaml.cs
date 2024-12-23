@@ -44,12 +44,6 @@ namespace IRC_WPF
                         listRequested = true;
                     }
 
-                    // فیلتر کردن پیام‌های نامربوط
-                    //if (response.StartsWith(":") && response.Contains("are supported by this server"))
-                    //{
-                    //    continue;
-                    //}
-
                     if (response.Contains("PRIVMSG"))
                     {
                         string sender = GetUserFromResponse(response);
@@ -442,20 +436,20 @@ namespace IRC_WPF
             });
         }
 
-        private void SendButton_Click(object sender, RoutedEventArgs e)
-        {
-            string message = MessageInput.Text;
-            if (string.IsNullOrEmpty(message)) return;
+        //private void SendButton_Click(object sender, RoutedEventArgs e)
+        //{
+        //    string message = MessageInput.Text;
+        //    if (string.IsNullOrEmpty(message)) return;
 
-            string target = currentChannel; // کانال فعلی یا کاربر انتخاب‌شده
-            if (ChatTabs.SelectedItem is TabItem selectedTab)
-            {
-                target = selectedTab.Header.ToString();
-            }
+        //    string target = currentChannel; // کانال فعلی یا کاربر انتخاب‌شده
+        //    if (ChatTabs.SelectedItem is TabItem selectedTab)
+        //    {
+        //        target = selectedTab.Header.ToString();
+        //    }
 
-            SendMessage(target, message);
-            MessageInput.Clear();
-        }
+        //    SendMessage(target, message);
+        //    MessageInput.Clear();
+        //}
 
 
         private async void ConnectMenuItem_Click(object sender, RoutedEventArgs e)

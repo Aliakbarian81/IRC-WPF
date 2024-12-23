@@ -4,21 +4,22 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="Modern IRC Client" Height="600" Width="900" Background="#FAFAFA" WindowStartupLocation="CenterScreen">
+        Title="Modern IRC Client" Height="750" Width="1100" Background="#FFFFFF" WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
-        <!-- سبک برای دکمه‌ها -->
+        <!-- استایل برای دکمه ها -->
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#0078D7" />
+            <Setter Property="Background" Value="#0078FF" />
             <Setter Property="Foreground" Value="White" />
-            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Margin" Value="5" />
             <Setter Property="Padding" Value="10,5" />
+            <Setter Property="FontSize" Value="14" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="5">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
                     </ControlTemplate>
@@ -26,43 +27,40 @@
             </Setter>
         </Style>
 
-        <!-- سبک برای TextBox -->
+        <!-- استایل برای قسمت چت -->
         <Style TargetType="TextBox">
             <Setter Property="Margin" Value="5" />
-            <Setter Property="Padding" Value="8" />
+            <Setter Property="Padding" Value="10" />
             <Setter Property="FontSize" Value="14" />
-            <Setter Property="BorderBrush" Value="#DADADA" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="Background" Value="White" />
+            <Setter Property="BorderBrush" Value="#DDDDDD" />
+            <Setter Property="BorderThickness" Value="2" />
+            <Setter Property="Background" Value="#F9F9F9" />
         </Style>
 
-        <!-- سبک برای TabControl -->
+        <!-- استایل برای لیست کاربران و کانال ها -->
         <Style TargetType="TabControl">
             <Setter Property="Margin" Value="10" />
             <Setter Property="Padding" Value="10" />
+            <Setter Property="Background" Value="#F3F4F6" />
+            <Setter Property="BorderBrush" Value="#E0E0E0" />
+            <Setter Property="BorderThickness" Value="2" />
         </Style>
 
-        <!-- سبک برای ListBox -->
-        <Style TargetType="ListBox">
-            <Setter Property="Margin" Value="10" />
-            <Setter Property="Padding" Value="10" />
-            <Setter Property="BorderBrush" Value="#DADADA" />
-            <Setter Property="BorderThickness" Value="1" />
-        </Style>
-
-        <!-- سبک برای TabItem با دکمه ضربدر -->
-        <Style TargetType="TabItem">
+        <!-- استایل برای تب چت ها -->
+        <Style x:Key="ClosableTabStyle" TargetType="TabItem">
             <Setter Property="HeaderTemplate">
                 <Setter.Value>
                     <DataTemplate>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{Binding}" Margin="0,0,5,0" />
-                            <Button Content="X" Width="20" Height="20" 
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding}" Margin="0,0,5,0" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#333333" />
+                            <Button Content="X" Width="18" Height="18" 
                                     Click="CloseTab_Click" 
-                                    Background="Transparent" 
+                                    Background="#FF5E57" 
+                                    Foreground="White" 
+                                    FontSize="10" 
                                     BorderThickness="0" 
                                     Tag="{Binding RelativeSource={RelativeSource AncestorType={x:Type TabItem}}}" 
-                                    Foreground="Red" />
+                                    VerticalAlignment="Center" />
                         </StackPanel>
                     </DataTemplate>
                 </Setter.Value>
@@ -70,64 +68,47 @@
         </Style>
     </Window.Resources>
 
+    
+    
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="3*" />
+            <ColumnDefinition Width="4.5*" />
             <ColumnDefinition Width="1.5*" />
         </Grid.ColumnDefinitions>
 
-        <!-- منو در بالا -->
-        <Menu VerticalAlignment="Top" Background="#F0F0F0" FontWeight="Bold">
+        <!-- منو -->
+        <Menu VerticalAlignment="Top" Background="#0078FF" Foreground="White" FontWeight="Bold" Grid.Row="0" Grid.ColumnSpan="2" FontSize="14">
             <MenuItem Header="File">
-                <MenuItem Header="Connect to Server" Click="ConnectMenuItem_Click" />
+                <MenuItem Header="Connect to Server" Click="ConnectMenuItem_Click" Foreground="Black" />
                 <Separator />
-                <MenuItem Header="Exit" Click="ExitMenuItem_Click" />
+                <MenuItem Header="Exit" Click="ExitMenuItem_Click" Foreground="Black" />
             </MenuItem>
             <MenuItem Header="Help">
-                <MenuItem Header="About" Click="AboutMenuItem_Click" />
+                <MenuItem Header="About" Click="AboutMenuItem_Click" Foreground="Black"/>
             </MenuItem>
         </Menu>
 
-        <!-- بخش چت -->
-        <TabControl Name="ChatTabs" Margin="10" Grid.Column="0" Background="#FFFFFF" BorderBrush="#DADADA">
+        <!-- چت -->
+        <TabControl Name="ChatTabs" Margin="10" Grid.Row="1" Grid.Column="0" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="2" ItemContainerStyle="{StaticResource ClosableTabStyle}">
             <TabItem Header="General Chat">
                 <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-
-                    <!-- Chat Area -->
-                    <TextBox Name="ChatBox" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Margin="10" Background="#FAFAFA" BorderBrush="#DADADA" Padding="10" Height="300" />
-
-                    <!-- Message Input -->
-                    <DockPanel Grid.Row="1" Margin="10">
-                        <TextBox Name="MessageInput" DockPanel.Dock="Left" Width="500" />
-                        <Button Content="Send" Click="SendButton_Click" DockPanel.Dock="Right" Width="75" />
-                    </DockPanel>
+                    <TextBox Name="ChatBox" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" 
+                             Margin="10" Background="#F9F9F9" BorderBrush="#DDDDDD" Padding="10" FontSize="14" Height="550" Foreground="#333333" />
                 </Grid>
             </TabItem>
         </TabControl>
 
-        <!-- لیست کاربران و کانال‌ها -->
-        <TabControl Margin="10" Grid.Column="1" Background="#FFFFFF" BorderBrush="#DADADA">
+        <!-- لیست کاربران و کانال ها -->
+        <TabControl Margin="10" Grid.Row="1" Grid.Column="1" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="2">
             <TabItem Header="Users">
-                <ListBox Name="UsersList">
-                    <ListBox.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="Chat" Click="UserChatMenuItem_Click" />
-                        </ContextMenu>
-                    </ListBox.ContextMenu>
-                </ListBox>
+                <ListBox Name="UsersList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" Background="#F9F9F9" Foreground="#333333" />
             </TabItem>
             <TabItem Header="Channels">
-                <ListBox Name="ChannelsList">
-                    <ListBox.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="Join Chat" Click="ChannelChatMenuItem_Click" />
-                        </ContextMenu>
-                    </ListBox.ContextMenu>
-                </ListBox>
+                <ListBox Name="ChannelsList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" Background="#F9F9F9" Foreground="#333333" />
             </TabItem>
         </TabControl>
     </Grid>
