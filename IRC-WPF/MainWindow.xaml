@@ -105,11 +105,38 @@
         <!-- لیست کاربران و کانال ها -->
         <TabControl Margin="10" Grid.Row="1" Grid.Column="1" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="2">
             <TabItem Header="Users">
-                <ListBox Name="UsersList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" Background="#F9F9F9" Foreground="#333333" />
+                <ListBox Name="UsersList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
+                 Background="#F9F9F9" Foreground="#333333">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="ContextMenu">
+                                <Setter.Value>
+                                    <ContextMenu DataContext="{Binding}">
+                                        <MenuItem Header="Private Chat" Click="UserChatMenuItem_Click" />
+                                    </ContextMenu>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
             </TabItem>
             <TabItem Header="Channels">
-                <ListBox Name="ChannelsList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" Background="#F9F9F9" Foreground="#333333" />
+                <ListBox Name="ChannelsList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
+                 Background="#F9F9F9" Foreground="#333333">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="ContextMenu">
+                                <Setter.Value>
+                                    <ContextMenu DataContext="{Binding}">
+                                        <MenuItem Header="Join Channel" Click="ChannelChatMenuItem_Click" />
+                                    </ContextMenu>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                </ListBox>
             </TabItem>
         </TabControl>
+
     </Grid>
 </Window>

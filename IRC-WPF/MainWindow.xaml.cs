@@ -27,8 +27,8 @@ namespace IRC_WPF
         {
             InitializeComponent();
         }
-        
-        // infinity loop for listen server meessages
+
+        // حلقه نامحدود برای دریافت پاسخ از سرور
         private async Task ListenForMessages()
         {
             bool listRequested = false;
@@ -47,7 +47,7 @@ namespace IRC_WPF
                     if (response.Contains("PRIVMSG"))
                     {
                         string sender = GetUserFromResponse(response);
-                        string target = response.Split(' ')[2]; // کانال یا کاربر
+                        string target = response.Split(' ')[2];
                         string message = response.Substring(response.IndexOf(':', 1) + 1);
 
                         Dispatcher.Invoke(() =>
@@ -63,60 +63,58 @@ namespace IRC_WPF
                         string pongResponse = response.Replace("PING", "PONG");
                         await writer.WriteLineAsync(pongResponse);
                     }
-                    else if (response.StartsWith(":") && response.Contains(" 322 "))
+                    else if (response.StartsWith(":"))
                     {
-                        string[] parts = response.Split(' ');
-                        if (parts.Length > 4)
+                        if (response.Contains(" 322 "))
                         {
-                            string channelName = parts[3];
-                            AddChannel(channelName);
-                        }
-                    }
-                    else if (response.Contains("323")) // End of channel list
-                    {
-                        Dispatcher.Invoke(() =>
-                        {
-                            ChatBox.AppendText("Channel list loaded.\n");
-                            _channelsLoaded = true; // تنظیم پرچم برای جلوگیری از درخواست مجدد
-                        });
-                    }
-                    else if (response.Contains("353")) // Response for NAMES list
-                    {
-                        string usersPart = response.Substring(response.LastIndexOf(':') + 1).Trim();
-                        string[] usersArray = usersPart.Split(' '); // جدا کردن کاربران
-                        AddUsers(usersArray); // اضافه کردن کاربران به لیست
-                    }
-                    else if (response.Contains("JOIN")) // User joins channel
-                    {
-                        string user = GetUserFromResponse(response);
-                        Dispatcher.Invoke(() =>
-                        {
-                            TabItem channelTab = ChatTabs.Items.Cast<TabItem>()
-                                .FirstOrDefault(tab => tab.Header.ToString() == currentChannel);
-
-                            if (channelTab?.Content is Grid grid)
+                            string[] parts = response.Split(' ');
+                            if (parts.Length > 4)
                             {
-                                TextBox chatBox = grid.Children.OfType<TextBox>().FirstOrDefault();
-                                chatBox?.AppendText($"{user} joined the channel.\n");
+                                string channelName = parts[3];
+                                AddChannel(channelName);
                             }
-                        });
-                    }
-                    else if (response.Contains("PART") || response.Contains("QUIT")) // User leaves channel
-                    {
-                        string user = GetUserFromResponse(response);
-                        RemoveUser(user);
-                    }
-                    else if (response.StartsWith(":") && response.Contains("are supported by this server"))
-                    {
-                        continue;
-                    }
-                    else if (!response.Contains("PRIVMSG") && !response.StartsWith(":"))
-                    {
-                        continue;
+                        }
+                        else if (response.Contains("323"))
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                ChatBox.AppendText("Channel list loaded.\n");
+                                _channelsLoaded = true;
+                            });
+                        }
+                        else if (response.Contains("353"))
+                        {
+                            string usersPart = response.Substring(response.LastIndexOf(':') + 1).Trim();
+                            string[] usersArray = usersPart.Split(' ');
+                            AddUsers(usersArray);
+                        }
+                        else if (response.Contains("JOIN"))
+                        {
+                            string user = GetUserFromResponse(response);
+                            Dispatcher.Invoke(() =>
+                            {
+                                TabItem channelTab = ChatTabs.Items.Cast<TabItem>()
+                                    .FirstOrDefault(tab => tab.Header.ToString() == currentChannel);
+
+                                if (channelTab?.Content is Grid grid)
+                                {
+                                    TextBox chatBox = grid.Children.OfType<TextBox>().FirstOrDefault();
+                                    chatBox?.AppendText($"{user} joined the channel.\n");
+                                }
+                            });
+                        }
+                        else if (response.Contains("PART") || response.Contains("QUIT"))
+                        {
+                            string user = GetUserFromResponse(response);
+                            RemoveUser(user);
+                        }
+                        //else if (response.Contains("are supported by this server"))
+                        //{
+                        //    continue;
+                        //}
                     }
                     if (response.Contains("DCC SEND"))
                     {
-                        // استخراج اطلاعات DCC
                         string[] parts = response.Split(' ');
                         if (parts.Length >= 7)
                         {
@@ -126,7 +124,6 @@ namespace IRC_WPF
                             int port = int.Parse(parts[6]);
                             long fileSize = long.Parse(parts[7]);
 
-                            // اعلان به کاربر
                             Dispatcher.Invoke(() =>
                             {
                                 AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
@@ -138,28 +135,16 @@ namespace IRC_WPF
                             });
                         }
                     }
-
-
-
                 }
             }
         }
 
 
 
-
-
-
-
-
-
-
         private void AppendMessageToTab(string header, string message)
         {
-            if (string.IsNullOrWhiteSpace(header))
-            {
-                return;
-            }
+            if (string.IsNullOrWhiteSpace(header)) return;
+
 
             TabItem existingTab = ChatTabs.Items.Cast<TabItem>().FirstOrDefault(tab => tab.Header.ToString() == header);
 
@@ -172,11 +157,8 @@ namespace IRC_WPF
             if (existingTab.Content is Grid grid)
             {
                 TextBox chatBox = grid.Children.OfType<TextBox>().FirstOrDefault();
-                if (chatBox != null)
-                {
-                    chatBox.AppendText(message + "\n");
-                    chatBox.ScrollToEnd();
-                }
+                chatBox?.AppendText(message + "\n");
+                chatBox?.ScrollToEnd();
             }
         }
 
@@ -196,32 +178,14 @@ namespace IRC_WPF
             {
                 foreach (var user in usersToAdd.Where(u => !string.IsNullOrEmpty(u)))
                 {
-                    if (users.Add(user)) // بررسی اضافه شدن به HashSet
+                    if (users.Add(user) && !UsersList.Items.Contains(user)) // بررسی اضافه شدن به HashSet
                     {
-                        if (!UsersList.Items.Contains(user)) // جلوگیری از افزودن تکراری
-                        {
-                            UsersList.Items.Add(user);
-                        }
+
+                        UsersList.Items.Add(user);
                     }
                 }
                 SortListBox(UsersList); // مرتب کردن لیست کاربران
             });
-        }
-
-
-        // add user to users list when a user join to server
-        private void AddUser(string user)
-        {
-            if (!string.IsNullOrEmpty(user) && users.Add(user)) // بررسی تکراری نبودن کاربر
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    if (!UsersList.Items.Contains(user)) // جلوگیری از افزودن تکراری به لیست
-                    {
-                        UsersList.Items.Add(user);
-                    }
-                });
-            }
         }
 
 
@@ -262,20 +226,6 @@ namespace IRC_WPF
 
 
 
-
-        private async void TabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (e.Source is TabControl tabControl && tabControl.SelectedItem is TabItem selectedTab)
-            {
-                if (selectedTab.Header.ToString() == "Channels" && !_channelsLoaded)
-                {
-                    ChatBox.AppendText("Channel list already loaded.\n");
-                }
-            }
-        }
-
-
-
         // add chanels to chanels list
         private void AddChannel(string channelName)
         {
@@ -288,6 +238,7 @@ namespace IRC_WPF
                 }
             });
         }
+
 
         // create new tab for chat message
         private void CreateChatTab(string header)
@@ -312,10 +263,10 @@ namespace IRC_WPF
             {
                 Name = "MessageInput",
                 Margin = new Thickness(0, 0, 5, 0),
-                Height = 20, // ارتفاع ثابت
+                Height = 40, // ارتفاع ثابت
                 Width = 400  // عرض ثابت یا پویا
             };
-            DockPanel.SetDock(messageInput, Dock.Left);
+            DockPanel.SetDock(messageInput, Dock.Right);
 
             Button sendButton = new Button { Content = "Send", Width = 75 };
             sendButton.Click += (sender, e) =>
@@ -365,16 +316,23 @@ namespace IRC_WPF
 
         private void UserChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (UsersList.SelectedItem is string selectedUser)
+            if (sender is MenuItem menuItem &&
+        menuItem.DataContext is string selectedUser)
             {
-                CreateChatTab($"{selectedUser}");
+                CreateChatTab(selectedUser);
             }
+
+            //if (UsersList.SelectedItem is string selectedUser)
+            //{
+            //    CreateChatTab($"{selectedUser}");
+            //}
         }
 
 
         private async void ChannelChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (ChannelsList.SelectedItem is string selectedChannel)
+            if (sender is MenuItem menuItem &&
+        menuItem.DataContext is string selectedChannel)
             {
                 // ارسال دستور JOIN به سرور
                 await writer.WriteLineAsync($"JOIN {selectedChannel}");
@@ -390,6 +348,23 @@ namespace IRC_WPF
                 // درخواست لیست کاربران کانال
                 await writer.WriteLineAsync($"NAMES {selectedChannel}");
             }
+
+            //if (ChannelsList.SelectedItem is string selectedChannel)
+            //{
+            //    // ارسال دستور JOIN به سرور
+            //    await writer.WriteLineAsync($"JOIN {selectedChannel}");
+            //    currentChannel = selectedChannel;
+
+            //    // ایجاد تب جدید برای کانال
+            //    Dispatcher.Invoke(() =>
+            //    {
+            //        ChatBox.AppendText($"Joining channel: {selectedChannel}\n");
+            //        CreateChatTab(selectedChannel);
+            //    });
+
+            //    // درخواست لیست کاربران کانال
+            //    await writer.WriteLineAsync($"NAMES {selectedChannel}");
+            //}
         }
 
 
@@ -436,20 +411,6 @@ namespace IRC_WPF
             });
         }
 
-        //private void SendButton_Click(object sender, RoutedEventArgs e)
-        //{
-        //    string message = MessageInput.Text;
-        //    if (string.IsNullOrEmpty(message)) return;
-
-        //    string target = currentChannel; // کانال فعلی یا کاربر انتخاب‌شده
-        //    if (ChatTabs.SelectedItem is TabItem selectedTab)
-        //    {
-        //        target = selectedTab.Header.ToString();
-        //    }
-
-        //    SendMessage(target, message);
-        //    MessageInput.Clear();
-        //}
 
 
         private async void ConnectMenuItem_Click(object sender, RoutedEventArgs e)
