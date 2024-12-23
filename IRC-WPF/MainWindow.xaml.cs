@@ -113,45 +113,32 @@ namespace IRC_WPF
                             RemoveUser(user);
                         }
                     }
-                    Console.WriteLine("Received response: " + response);
-                     if (response.Contains("DCC SEND"))
+                    if (response.Contains("DCC SEND"))
                     {
-                        try
+                        string cleanResponse = response.Replace("\u0001", "");
+                        string[] parts = cleanResponse.Split(' ');
+
+                        if (parts.Length >= 7)
                         {
-                            string cleanResponse = response.Replace("\u0001", "");
-                            string[] parts = cleanResponse.Split(' ');
+                            string sender = GetUserFromResponse(response);
+                            string fileName = parts[5].TrimStart(':');
+                            string ipAddress = IntegerToIP(int.Parse(parts[6]));
+                            int port = int.Parse(parts[7]);
+                            long fileSize = long.Parse(parts[8]);
 
-                            Console.WriteLine("Parts: " + string.Join(", ", parts));  // برای اشکال‌زدایی
-
-                            if (parts.Length >= 6) // یا بیشتر، بسته به ساختار
+                            Dispatcher.Invoke(() =>
                             {
-                                string sender = GetUserFromResponse(response);
-                                string fileName = parts[3].TrimStart(':');
-                                string ipAddress = IntegerToIP2(Convert.ToInt64(parts[4]));
-                                int port = int.Parse(parts[5]);
-                                long fileSize = long.Parse(parts[6]);
-
-                                Dispatcher.Invoke(() =>
+                                if (MessageBox.Show($"Accept file '{fileName}' from {sender} ({fileSize / 1024} KB)?",
+                                                    "File Transfer Request",
+                                                    MessageBoxButton.YesNo,
+                                                    MessageBoxImage.Question) == MessageBoxResult.Yes)
                                 {
-                                    AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
-
-                                    if (MessageBox.Show($"Do you want to accept the file '{fileName}' from {sender}?",
-                                                        "File Transfer Request", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
-                                    {
-                                        _ = ReceiveFileAsync(fileName, ipAddress, port, fileSize);
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                AppendMessageToTab("System", "Invalid DCC SEND format.");
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            AppendMessageToTab("System", $"Failed to process DCC SEND: {ex.Message}");
+                                    _ = ReceiveFileAsync(fileName, ipAddress, port, fileSize);
+                                }
+                            });
                         }
                     }
+
 
 
 
@@ -304,12 +291,21 @@ namespace IRC_WPF
             };
             fileButton.Click += async (sender, e) =>
             {
-                string filePath = SelectFile(); // متد برای انتخاب فایل از سیستم
+                string filePath = SelectFile();
                 if (!string.IsNullOrEmpty(filePath))
                 {
-                    await SendFileAsync(filePath);
+                    try
+                    {
+                        // ارسال فایل به عنوان درخواست به کاربر
+                        await SendFileRequestAsync(filePath, header); // header همان نام کاربر مقصد است
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"Error while sending file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
                 }
             };
+
             Grid.SetColumn(fileButton, 0);
 
             // TextBox برای ورودی پیام
@@ -546,8 +542,17 @@ namespace IRC_WPF
 
         private string IntegerToIP2(long ip)
         {
-            return string.Join(".", BitConverter.GetBytes(ip).Reverse().Take(4));
+            byte[] bytes = BitConverter.GetBytes(ip);
+
+            // بررسی ترتیب بایت‌ها و اطمینان از استفاده از 4 بایت
+            if (BitConverter.IsLittleEndian)
+            {
+                Array.Reverse(bytes);
+            }
+
+            return string.Join(".", bytes.Take(4));
         }
+
 
 
         private string IntegerToIP(long ipAddress)
@@ -564,11 +569,50 @@ namespace IRC_WPF
 
         private string GetPublicIPAddress()
         {
-            using (var client = new WebClient())
+            try
             {
-                return client.DownloadString("https://api.ipify.org").Trim();
+                using (var client = new WebClient())
+                {
+                    return client.DownloadString("https://api.ipify.org").Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception("Unable to retrieve public IP address.", ex);
             }
         }
+
+
+        public async Task SendFileRequestAsync(string filePath, string recipient)
+        {
+            int port = new Random().Next(49152, 65535);
+            string fileName = Path.GetFileName(filePath);
+            long fileSize = new FileInfo(filePath).Length;
+
+            TcpListener listener = new TcpListener(IPAddress.Any, port);
+            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Start();
+
+            string localIP = GetPublicIPAddress();
+            long ipAsLong = IPToInteger(localIP);
+
+            string dccMessage = $"\u0001DCC SEND {fileName} {ipAsLong} {port} {fileSize}\u0001";
+            await writer.WriteLineAsync($"PRIVMSG {recipient} :{dccMessage}");
+
+            // منتظر اتصال گیرنده
+            _ = Task.Run(async () =>
+            {
+                using TcpClient client = await listener.AcceptTcpClientAsync();
+                using var stream = client.GetStream();
+                using var fileStream = File.OpenRead(filePath);
+
+                await fileStream.CopyToAsync(stream);
+                Console.WriteLine("File sent successfully!");
+
+                listener.Stop();
+            });
+        }
+
 
 
 
