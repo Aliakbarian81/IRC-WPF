@@ -316,23 +316,16 @@ namespace IRC_WPF
 
         private void UserChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is MenuItem menuItem &&
-        menuItem.DataContext is string selectedUser)
+            if (UsersList.SelectedItem is string selectedUser)
             {
-                CreateChatTab(selectedUser);
+                CreateChatTab($"{selectedUser}");
             }
-
-            //if (UsersList.SelectedItem is string selectedUser)
-            //{
-            //    CreateChatTab($"{selectedUser}");
-            //}
         }
 
 
         private async void ChannelChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is MenuItem menuItem &&
-        menuItem.DataContext is string selectedChannel)
+            if (ChannelsList.SelectedItem is string selectedChannel)
             {
                 // ارسال دستور JOIN به سرور
                 await writer.WriteLineAsync($"JOIN {selectedChannel}");
@@ -348,23 +341,6 @@ namespace IRC_WPF
                 // درخواست لیست کاربران کانال
                 await writer.WriteLineAsync($"NAMES {selectedChannel}");
             }
-
-            //if (ChannelsList.SelectedItem is string selectedChannel)
-            //{
-            //    // ارسال دستور JOIN به سرور
-            //    await writer.WriteLineAsync($"JOIN {selectedChannel}");
-            //    currentChannel = selectedChannel;
-
-            //    // ایجاد تب جدید برای کانال
-            //    Dispatcher.Invoke(() =>
-            //    {
-            //        ChatBox.AppendText($"Joining channel: {selectedChannel}\n");
-            //        CreateChatTab(selectedChannel);
-            //    });
-
-            //    // درخواست لیست کاربران کانال
-            //    await writer.WriteLineAsync($"NAMES {selectedChannel}");
-            //}
         }
 
 
