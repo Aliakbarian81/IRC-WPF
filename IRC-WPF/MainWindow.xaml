@@ -97,7 +97,7 @@
             <TabItem Header="General Chat">
                 <Grid>
                     <TextBox Name="ChatBox" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" 
-                             Margin="10" Background="#F9F9F9" BorderBrush="#DDDDDD" Padding="10" FontSize="14" Height="550" Foreground="#333333" />
+                             Margin="10" Background="#F9F9F9" BorderBrush="#DDDDDD" Padding="10" FontSize="14" Height="580" Foreground="#333333" />
                 </Grid>
             </TabItem>
         </TabControl>
@@ -107,7 +107,7 @@
 
         <TabControl Margin="10" Grid.Row="1" Grid.Column="1" Background="#FFFFFF" BorderBrush="#E0E0E0" BorderThickness="2">
             <TabItem Header="Users">
-                <ListBox Name="UsersList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
+                <ListBox Name="UsersList" Height="600" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
                          Background="#F9F9F9" Foreground="#333333">
                     <ListBox.ContextMenu>
                         <ContextMenu>
@@ -117,7 +117,7 @@
                 </ListBox>
             </TabItem>
             <TabItem Header="Channels">
-                <ListBox Name="ChannelsList" Height="550" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
+                <ListBox Name="ChannelsList" Height="600" BorderBrush="#DDDDDD" BorderThickness="1" Padding="10" 
                          Background="#F9F9F9" Foreground="#333333">
                     <ListBox.ContextMenu>
                         <ContextMenu>

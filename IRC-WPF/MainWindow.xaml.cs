@@ -7,6 +7,9 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
+using System.Windows.Media;
+using System.Diagnostics;
 
 
 namespace IRC_WPF
@@ -108,33 +111,49 @@ namespace IRC_WPF
                             string user = GetUserFromResponse(response);
                             RemoveUser(user);
                         }
-                        //else if (response.Contains("are supported by this server"))
-                        //{
-                        //    continue;
-                        //}
                     }
                     if (response.Contains("DCC SEND"))
                     {
-                        string[] parts = response.Split(' ');
-                        if (parts.Length >= 7)
+                        try
                         {
-                            string sender = GetUserFromResponse(response);
-                            string fileName = parts[4].TrimStart(':');
-                            string ipAddress = IntegerToIP(Convert.ToInt64(parts[5]));
-                            int port = int.Parse(parts[6]);
-                            long fileSize = long.Parse(parts[7]);
+                            // حذف کاراکترهای کنترل در ابتدای و انتهای پیام
+                            string cleanResponse = response.Trim().Trim('\u0001');
 
-                            Dispatcher.Invoke(() =>
+                            // تقسیم بر اساس فاصله
+                            string[] parts = cleanResponse.Split(' ');
+
+                            // اطمینان از اینکه پیام حداقل 7 بخش دارد
+                            if (parts.Length >= 7)
                             {
-                                AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
-                                if (MessageBox.Show($"Do you want to accept the file '{fileName}' from {sender}?",
-                                                    "File Transfer Request", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                                string sender = GetUserFromResponse(response); // استخراج فرستنده
+                                string fileName = parts[5].TrimStart(':'); // استخراج نام فایل
+                                string ipAddress = IntegerToIP(Convert.ToInt64(parts[6])); // تبدیل IP
+                                int port = int.Parse(parts[7]); // استخراج پورت
+                                long fileSize = long.Parse(parts[8]); // استخراج اندازه فایل
+
+                                Dispatcher.Invoke(() =>
                                 {
-                                    _ = ReceiveFile(fileName, ipAddress, port, fileSize, sender);
-                                }
-                            });
+                                    AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
+
+                                    // نمایش دیالوگ برای تایید دریافت فایل
+                                    if (MessageBox.Show($"Do you want to accept the file '{fileName}' from {sender}?",
+                                                        "File Transfer Request", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+                                    {
+                                        _ = ReceiveFile(fileName, ipAddress, port, fileSize, sender);
+                                    }
+                                });
+                            }
+                            else
+                            {
+                                AppendMessageToTab("System", "Invalid DCC SEND format.");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            AppendMessageToTab("System", $"Failed to process DCC SEND: {ex.Message}");
                         }
                     }
+
                 }
             }
         }
@@ -247,6 +266,7 @@ namespace IRC_WPF
             chatGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             chatGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
+            // TextBox برای نمایش پیام‌ها
             TextBox chatBox = new TextBox
             {
                 IsReadOnly = true,
@@ -256,39 +276,74 @@ namespace IRC_WPF
             };
             Grid.SetRow(chatBox, 0);
 
-            DockPanel messagePanel = new DockPanel { Margin = new Thickness(5) };
+            // Grid برای قسمت پایین (ورودی پیام و دکمه‌ها)
+            Grid messageGrid = new Grid
+            {
+                Margin = new Thickness(5)
+            };
+            messageGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // برای آیکون گیره
+            messageGrid.ColumnDefinitions.Add(new ColumnDefinition()); // برای اینپوت پیام
+            messageGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // برای دکمه ارسال
 
-            // استفاده از ارتفاع و عرض ثابت برای اینپوت
+            // آیکون گیره برای ارسال فایل
+            Button fileButton = new Button
+            {
+                Width = 40,
+                Height = 40,
+                Padding = new Thickness(5),
+                Margin = new Thickness(0, 0, 5, 0),
+                Background = Brushes.Transparent,
+                BorderBrush = Brushes.Transparent,
+                Content = new Image
+                {
+                    Source = new BitmapImage(new Uri("pack://application:,,,/Resources/attach_file.png")),
+                    Width = 24,
+                    Height = 24
+                }
+            };
+            fileButton.Click += (sender, e) =>
+            {
+                SendFileWithDCC(header);
+            };
+            Grid.SetColumn(fileButton, 0);
+
+            // TextBox برای ورودی پیام
             TextBox messageInput = new TextBox
             {
                 Name = "MessageInput",
-                Margin = new Thickness(0, 0, 5, 0),
-                Height = 40, // ارتفاع ثابت
-                Width = 400  // عرض ثابت یا پویا
+                Height = 50,
+                Margin = new Thickness(5, 0, 5, 0)
             };
-            DockPanel.SetDock(messageInput, Dock.Right);
+            Grid.SetColumn(messageInput, 1);
 
-            Button sendButton = new Button { Content = "Send", Width = 75 };
+            // دکمه ارسال پیام
+            Button sendButton = new Button
+            {
+                Content = "Send",
+                Width = 75,
+                Height = 40,
+                Margin = new Thickness(0, 0, 5, 0)
+            };
             sendButton.Click += (sender, e) =>
             {
                 SendMessage(header, messageInput.Text);
                 messageInput.Clear();
             };
+            Grid.SetColumn(sendButton, 2);
 
-            Button fileButton = new Button { Content = "Send File", Width = 80, Margin = new Thickness(5, 0, 0, 0) };
-            fileButton.Click += (sender, e) =>
-            {
-                SendFileWithDCC(header);
-            };
+            // افزودن آیتم‌ها به Grid
+            messageGrid.Children.Add(fileButton);
+            messageGrid.Children.Add(messageInput);
+            messageGrid.Children.Add(sendButton);
 
-            messagePanel.Children.Add(fileButton);
-            messagePanel.Children.Add(messageInput);
-            messagePanel.Children.Add(sendButton);
-            Grid.SetRow(messagePanel, 1);
-
+            // افزودن Gridها به ChatGrid
             chatGrid.Children.Add(chatBox);
-            chatGrid.Children.Add(messagePanel);
+            Grid.SetRow(chatBox, 0);
 
+            chatGrid.Children.Add(messageGrid);
+            Grid.SetRow(messageGrid, 1);
+
+            // افزودن تب جدید
             TabItem newTab = new TabItem
             {
                 Header = header,
@@ -456,15 +511,35 @@ namespace IRC_WPF
                 });
 
                 // منتظر اتصال گیرنده
-                TcpClient tcpClient = await tcpListener.AcceptTcpClientAsync();
-
-                // ارسال فایل
-                using (NetworkStream networkStream = tcpClient.GetStream())
+                using (TcpClient tcpClient = await tcpListener.AcceptTcpClientAsync())
                 {
-                    await networkStream.WriteAsync(fileData, 0, fileData.Length);
+                    // ارسال فایل
+                    using (NetworkStream networkStream = tcpClient.GetStream())
+                    {
+                        int bufferSize = 8192;
+                        byte[] buffer = new byte[bufferSize];
+                        int bytesSent = 0;
+
+                        using (FileStream fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
+                        {
+                            int bytesRead;
+                            while ((bytesRead = fileStream.Read(buffer, 0, bufferSize)) > 0)
+                            {
+                                await networkStream.WriteAsync(buffer, 0, bytesRead);
+                                bytesSent += bytesRead;
+
+                                // نمایش پیشرفت ارسال
+                                Dispatcher.Invoke(() =>
+                                {
+                                    AppendMessageToTab(recipient, $"Sending file: {fileName} ({bytesSent * 100 / fileData.Length}%)");
+                                });
+                            }
+                        }
+                        await networkStream.FlushAsync();
+
+                    }
                 }
 
-                tcpClient.Close();
                 tcpListener.Stop();
 
                 Dispatcher.Invoke(() =>
@@ -514,7 +589,17 @@ namespace IRC_WPF
             {
                 using (TcpClient client = new TcpClient())
                 {
+                    AppendMessageToTab(sender, $"Connecting to IP: {ipAddress}, Port: {port}");
+
+
+                    // تنظیم Timeout برای جلوگیری از قفل شدن
+                    client.ReceiveTimeout = 30000; // 30 ثانیه
+                    client.SendTimeout = 30000;   // 30 ثانیه
+
                     await client.ConnectAsync(ipAddress, port);
+                    AppendMessageToTab(sender, "Connected to server");
+
+
                     using (NetworkStream networkStream = client.GetStream())
                     {
                         // مسیر ذخیره فایل
@@ -559,6 +644,7 @@ namespace IRC_WPF
                 });
             }
         }
+
 
 
 
