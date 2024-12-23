@@ -113,34 +113,32 @@ namespace IRC_WPF
                             RemoveUser(user);
                         }
                     }
-                    if (response.Contains("DCC SEND"))
+                    Console.WriteLine("Received response: " + response);
+                     if (response.Contains("DCC SEND"))
                     {
                         try
                         {
-                            // حذف کاراکترهای کنترل در ابتدای و انتهای پیام
-                            string cleanResponse = response.Trim().Trim('\u0001');
-
-                            // تقسیم بر اساس فاصله
+                            string cleanResponse = response.Replace("\u0001", "");
                             string[] parts = cleanResponse.Split(' ');
 
-                            // اطمینان از اینکه پیام حداقل 7 بخش دارد
-                            if (parts.Length >= 7)
+                            Console.WriteLine("Parts: " + string.Join(", ", parts));  // برای اشکال‌زدایی
+
+                            if (parts.Length >= 6) // یا بیشتر، بسته به ساختار
                             {
-                                string sender = GetUserFromResponse(response); // استخراج فرستنده
-                                string fileName = parts[5].TrimStart(':'); // استخراج نام فایل
-                                string ipAddress = IntegerToIP(Convert.ToInt64(parts[6])); // تبدیل IP
-                                int port = int.Parse(parts[7]); // استخراج پورت
-                                long fileSize = long.Parse(parts[8]); // استخراج اندازه فایل
+                                string sender = GetUserFromResponse(response);
+                                string fileName = parts[3].TrimStart(':');
+                                string ipAddress = IntegerToIP2(Convert.ToInt64(parts[4]));
+                                int port = int.Parse(parts[5]);
+                                long fileSize = long.Parse(parts[6]);
 
                                 Dispatcher.Invoke(() =>
                                 {
                                     AppendMessageToTab(sender, $"Incoming file: {fileName} ({fileSize / 1024} KB) from {sender}");
 
-                                    // نمایش دیالوگ برای تایید دریافت فایل
                                     if (MessageBox.Show($"Do you want to accept the file '{fileName}' from {sender}?",
                                                         "File Transfer Request", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
                                     {
-                                        _ = ReceiveFile(fileName, ipAddress, port, fileSize, sender);
+                                        _ = ReceiveFileAsync(fileName, ipAddress, port, fileSize);
                                     }
                                 });
                             }
@@ -154,6 +152,8 @@ namespace IRC_WPF
                             AppendMessageToTab("System", $"Failed to process DCC SEND: {ex.Message}");
                         }
                     }
+
+
 
                 }
             }
@@ -302,9 +302,13 @@ namespace IRC_WPF
                     Height = 24
                 }
             };
-            fileButton.Click += (sender, e) =>
+            fileButton.Click += async (sender, e) =>
             {
-                SendFileWithDCC(header);
+                string filePath = SelectFile(); // متد برای انتخاب فایل از سیستم
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    await SendFileAsync(filePath);
+                }
             };
             Grid.SetColumn(fileButton, 0);
 
@@ -485,91 +489,64 @@ namespace IRC_WPF
             MessageBox.Show("IRC Chat Application\nVersion 1.0", "About", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        private async void SendFileWithDCC(string recipient)
+        public async Task SendFileAsync(string filePath)
         {
-            var openFileDialog = new Microsoft.Win32.OpenFileDialog();
-            if (openFileDialog.ShowDialog() == true)
-            {
-                string filePath = openFileDialog.FileName;
-                string fileName = Path.GetFileName(filePath);
-                byte[] fileData = File.ReadAllBytes(filePath);
+            int port = new Random().Next(49152, 65535);
+            string fileName = Path.GetFileName(filePath);
+            long fileSize = new FileInfo(filePath).Length;
 
-                // ایجاد یک سرور TCP برای انتقال فایل
-                TcpListener tcpListener = new TcpListener(System.Net.IPAddress.Any, 0);
-                tcpListener.Start();
+            TcpListener listener = new TcpListener(IPAddress.Any, port);
+            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            listener.Start(); // Start listening on the specified port
 
-                // دریافت پورت محلی
-                int localPort = ((System.Net.IPEndPoint)tcpListener.LocalEndpoint).Port;
-                //string localIPAddress = GetLocalIPAddress();
-                string localIPAddress = GetPublicIPAddress();
+            Console.WriteLine($"Listening on port {port}. Waiting for connections...");
 
-                // ارسال درخواست DCC به گیرنده
-                string dccRequest = $"PRIVMSG {recipient} :\u0001DCC SEND {fileName} {IPToInteger(localIPAddress)} {localPort} {fileData.Length}\u0001";
-                await writer.WriteLineAsync(dccRequest);
+            // ساخت پیام DCC
+            string localIP = GetLocalIPAddress(); // به‌جای استفاده از "127.0.0.1"، آدرس IP واقعی سیستم را بگیرید
+            long ipAsLong = IPToInteger(localIP);
+            string dccMessage = $"\u0001DCC SEND {fileName} {ipAsLong} {port} {fileSize}\u0001";
+            Console.WriteLine($"DCC Message: {dccMessage}");
 
-                Dispatcher.Invoke(() =>
-                {
-                    AppendMessageToTab(recipient, $"DCC request sent for file: {fileName}");
-                });
+            // منتظر اتصال از گیرنده
+            using TcpClient client = await listener.AcceptTcpClientAsync();
+            Console.WriteLine("Connection established!");
 
-                // منتظر اتصال گیرنده
-                using (TcpClient tcpClient = await tcpListener.AcceptTcpClientAsync())
-                {
-                    // ارسال فایل
-                    using (NetworkStream networkStream = tcpClient.GetStream())
-                    {
-                        int bufferSize = 8192;
-                        byte[] buffer = new byte[bufferSize];
-                        int bytesSent = 0;
+            // ارسال فایل
+            using var stream = client.GetStream();
+            using var fileStream = File.OpenRead(filePath);
 
-                        using (FileStream fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read))
-                        {
-                            int bytesRead;
-                            while ((bytesRead = fileStream.Read(buffer, 0, bufferSize)) > 0)
-                            {
-                                await networkStream.WriteAsync(buffer, 0, bytesRead);
-                                bytesSent += bytesRead;
+            await fileStream.CopyToAsync(stream);
+            Console.WriteLine("File sent successfully!");
 
-                                // نمایش پیشرفت ارسال
-                                Dispatcher.Invoke(() =>
-                                {
-                                    AppendMessageToTab(recipient, $"Sending file: {fileName} ({bytesSent * 100 / fileData.Length}%)");
-                                });
-                            }
-                        }
-                        await networkStream.FlushAsync();
-
-                    }
-                }
-
-                tcpListener.Stop();
-
-                Dispatcher.Invoke(() =>
-                {
-                    AppendMessageToTab(recipient, $"File {fileName} sent successfully!");
-                });
-            }
+            listener.Stop(); // Stop listening after the file is sent
         }
-        private int IPToInteger(string ipAddress)
+
+        private long IPToInteger(string ipAddress)
         {
-            string[] ipParts = ipAddress.Split('.');
-            return (int.Parse(ipParts[0]) << 24) |
-                   (int.Parse(ipParts[1]) << 16) |
-                   (int.Parse(ipParts[2]) << 8) |
-                   int.Parse(ipParts[3]);
+            return ipAddress.Split('.')
+                            .Select(byte.Parse)
+                            .Aggregate(0L, (acc, part) => (acc << 8) + part);
         }
+
+
 
         private string GetLocalIPAddress()
         {
-            var host = System.Net.Dns.GetHostEntry(System.Net.Dns.GetHostName());
+            var host = Dns.GetHostEntry(Dns.GetHostName());
             foreach (var ip in host.AddressList)
             {
-                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     return ip.ToString();
                 }
             }
             throw new Exception("Local IP Address Not Found!");
+        }
+
+
+        private string IntegerToIP2(long ip)
+        {
+            return string.Join(".", BitConverter.GetBytes(ip).Reverse().Take(4));
         }
 
 
@@ -595,68 +572,54 @@ namespace IRC_WPF
 
 
 
-        private async Task ReceiveFile(string fileName, string ipAddress, int port, long fileSize, string sender)
+        public async Task ReceiveFileAsync(string fileName, string ipAddress, int port, long fileSize)
         {
+            Console.WriteLine($"Connecting to IP: {ipAddress}, Port: {port}");
+
             try
             {
-                using (TcpClient client = new TcpClient())
+                using TcpClient client = new TcpClient();
+
+                // اتصال به فرستنده
+                await client.ConnectAsync(ipAddress, port);
+                Console.WriteLine("Connected to the server!");
+
+                using var stream = client.GetStream();
+                using var fileStream = File.Create(fileName);
+
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytesRead = 0;
+
+                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                 {
-                    AppendMessageToTab(sender, $"Connecting to IP: {ipAddress}, Port: {port}");
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesRead += bytesRead;
 
-
-                    // تنظیم Timeout برای جلوگیری از قفل شدن
-                    client.ReceiveTimeout = 30000; // 30 ثانیه
-                    client.SendTimeout = 30000;   // 30 ثانیه
-
-                    await client.ConnectAsync(ipAddress, port);
-                    AppendMessageToTab(sender, "Connected to server");
-
-
-                    using (NetworkStream networkStream = client.GetStream())
-                    {
-                        // مسیر ذخیره فایل
-                        string savePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), fileName);
-
-                        using (FileStream fileStream = new FileStream(savePath, FileMode.Create, FileAccess.Write))
-                        {
-                            byte[] buffer = new byte[8192];
-                            long totalReceived = 0;
-
-                            while (totalReceived < fileSize)
-                            {
-                                int bytesRead = await networkStream.ReadAsync(buffer, 0, buffer.Length);
-                                if (bytesRead == 0)
-                                    break;
-
-                                await fileStream.WriteAsync(buffer, 0, bytesRead);
-                                totalReceived += bytesRead;
-
-                                // نمایش پیشرفت دانلود
-                                Dispatcher.Invoke(() =>
-                                {
-                                    AppendMessageToTab(sender, $"Receiving file: {fileName} ({totalReceived * 100 / fileSize}%)");
-                                });
-                            }
-                        }
-
-                        Dispatcher.Invoke(() =>
-                        {
-                            AppendMessageToTab(sender, $"File received and saved as: {fileName}");
-                            MessageBox.Show($"File '{fileName}' received and saved in Documents.", "File Received", MessageBoxButton.OK, MessageBoxImage.Information);
-                        });
-                    }
+                    Console.WriteLine($"Received {totalBytesRead} of {fileSize} bytes");
+                    if (totalBytesRead >= fileSize)
+                        break;
                 }
+
+                Console.WriteLine($"File '{fileName}' received successfully!");
             }
             catch (Exception ex)
             {
-                Dispatcher.Invoke(() =>
-                {
-                    AppendMessageToTab(sender, $"Failed to receive file '{fileName}': {ex.Message}");
-                    MessageBox.Show($"Failed to receive file '{fileName}': {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                });
+                Console.WriteLine($"Failed to receive file '{fileName}': {ex.Message}");
             }
         }
 
+
+
+        private string SelectFile()
+        {
+            Microsoft.Win32.OpenFileDialog openFileDialog = new Microsoft.Win32.OpenFileDialog();
+            if (openFileDialog.ShowDialog() == true)
+            {
+                return openFileDialog.FileName;
+            }
+            return string.Empty;
+        }
 
 
 
