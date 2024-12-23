@@ -10,6 +10,7 @@ using System.Windows.Controls;
 using System.Windows.Media.Imaging;
 using System.Windows.Media;
 using System.Diagnostics;
+using System.Net;
 
 
 namespace IRC_WPF
@@ -499,7 +500,8 @@ namespace IRC_WPF
 
                 // دریافت پورت محلی
                 int localPort = ((System.Net.IPEndPoint)tcpListener.LocalEndpoint).Port;
-                string localIPAddress = GetLocalIPAddress();
+                //string localIPAddress = GetLocalIPAddress();
+                string localIPAddress = GetPublicIPAddress();
 
                 // ارسال درخواست DCC به گیرنده
                 string dccRequest = $"PRIVMSG {recipient} :\u0001DCC SEND {fileName} {IPToInteger(localIPAddress)} {localPort} {fileData.Length}\u0001";
@@ -581,6 +583,16 @@ namespace IRC_WPF
         ipAddress & 0xFF
     });
         }
+
+
+        private string GetPublicIPAddress()
+        {
+            using (var client = new WebClient())
+            {
+                return client.DownloadString("https://api.ipify.org").Trim();
+            }
+        }
+
 
 
         private async Task ReceiveFile(string fileName, string ipAddress, int port, long fileSize, string sender)
