@@ -372,7 +372,9 @@ namespace IRC_WPF
             TabItem newTab = new TabItem
             {
                 Header = header,
-                Content = chatGrid
+                Content = chatGrid,
+                Tag = true
+
             };
 
             ChatTabs.Items.Add(newTab);
@@ -386,7 +388,10 @@ namespace IRC_WPF
         {
             if (sender is Button button && button.Tag is TabItem tab)
             {
-                ChatTabs.Items.Remove(tab);
+                if (tab.Tag is bool canClose && canClose)
+                {
+                    ChatTabs.Items.Remove(tab);
+                }
             }
         }
 
@@ -448,15 +453,34 @@ namespace IRC_WPF
         // ارسال فایل
         public async Task SendFileRequestAsync(string filePath, string recipient)
         {
+            TcpListener listener = null;
             try
             {
+                // Try to find an available port
                 int port = 8001;
+                const int maxPortAttempts = 10;
+
+                for (int i = 0; i < maxPortAttempts; i++)
+                {
+                    try
+                    {
+                        AddFirewallRule(port);
+                        listener = new TcpListener(IPAddress.Any, port);
+                        listener.Start();
+                        break;
+                    }
+                    catch (SocketException)
+                    {
+                        port++;
+                        if (i == maxPortAttempts - 1)
+                            throw new Exception("Unable to find available port");
+                    }
+                }
+
                 string fileName = Path.GetFileName(filePath);
                 long fileSize = new FileInfo(filePath).Length;
 
-                var listener = new TcpListener(IPAddress.Any, port);
-                listener.Start();
-
+                // Get the correct IP address
                 string localIP = GetLocalIPAddress();
                 long ipAsLong = IPToInteger(localIP);
 
@@ -468,53 +492,36 @@ namespace IRC_WPF
                     AppendMessageToTab(recipient, $"Waiting for {recipient} to accept file transfer...");
                 });
 
-                // تنظیم تایم‌اوت برای پذیرش اتصال
                 using var cts = new CancellationTokenSource();
                 cts.CancelAfter(TimeSpan.FromMinutes(1));
 
-                TcpClient client;
-                try
+                using var client = await listener.AcceptTcpClientAsync().WaitAsync(cts.Token);
+                client.SendTimeout = 30000;
+                client.ReceiveTimeout = 30000;
+
+                using var stream = client.GetStream();
+                using var fileStream = File.OpenRead(filePath);
+
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytesSent = 0;
+
+                while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
                 {
-                    client = await Task.Run(() => listener.AcceptTcpClientAsync(), cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Dispatcher.Invoke(() =>
+                    await stream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesSent += bytesRead;
+
+                    if (totalBytesSent % (fileSize / 10) == 0)
                     {
-                        AppendMessageToTab(recipient, "File transfer timed out.");
-                    });
-                    listener.Stop();
-                    return;
-                }
-
-                using (client)
-                using (NetworkStream stream = client.GetStream())
-                using (FileStream fileStream = File.OpenRead(filePath))
-                {
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    long totalBytesSent = 0;
-
-                    while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
-                    {
-                        await stream.WriteAsync(buffer, 0, bytesRead);
-                        totalBytesSent += bytesRead;
-
-                        if (totalBytesSent % (fileSize / 10) == 0)
+                        double progress = (double)totalBytesSent / fileSize * 100;
+                        Dispatcher.Invoke(() =>
                         {
-                            double progress = (double)totalBytesSent / fileSize * 100;
-                            Dispatcher.Invoke(() =>
-                            {
-                                AppendMessageToTab(recipient, $"Sending: {progress:F1}% complete");
-                            });
-                        }
+                            AppendMessageToTab(recipient, $"Sending: {progress:F1}% complete");
+                        });
                     }
-
-                    // اطمینان از ارسال تمام داده‌ها
-                    await stream.FlushAsync();
                 }
 
-                listener.Stop();
+                await stream.FlushAsync();
 
                 Dispatcher.Invoke(() =>
                 {
@@ -529,6 +536,10 @@ namespace IRC_WPF
                     MessageBox.Show($"Error sending file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 });
             }
+            finally
+            {
+                listener?.Stop();
+            }
         }
 
 
@@ -536,6 +547,7 @@ namespace IRC_WPF
         // دریافت فایل
         public async Task ReceiveFileAsync(string fileName, string ipAddress, int port, long fileSize)
         {
+            TcpClient client = null;
             try
             {
                 string savePath;
@@ -547,72 +559,48 @@ namespace IRC_WPF
                 };
 
                 bool? dialogResult = Dispatcher.Invoke(() => saveDialog.ShowDialog());
-
-                if (dialogResult != true)
-                {
-                    return;
-                }
+                if (dialogResult != true) return;
 
                 savePath = saveDialog.FileName;
 
-                using var client = new TcpClient();
+                client = new TcpClient();
+                client.SendTimeout = 30000;
+                client.ReceiveTimeout = 30000;
 
-                // تنظیم تایم‌اوت برای اتصال
                 using var cts = new CancellationTokenSource();
                 cts.CancelAfter(TimeSpan.FromSeconds(30));
 
-                try
+                await client.ConnectAsync(ipAddress, port).WaitAsync(cts.Token);
+
+                using var stream = client.GetStream();
+                using var fileStream = File.Create(savePath);
+
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytesRead = 0;
+                DateTime lastRead = DateTime.Now;
+
+                while (totalBytesRead < fileSize)
                 {
-                    await client.ConnectAsync(ipAddress, port).WaitAsync(cts.Token);
-                }
-                catch (OperationCanceledException)
-                {
-                    Dispatcher.Invoke(() =>
+                    bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead == 0) break;
+
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesRead += bytesRead;
+                    lastRead = DateTime.Now;
+
+                    if (totalBytesRead % (fileSize / 10) == 0)
                     {
-                        ChatBox.AppendText("Connection timed out.\n");
-                    });
-                    return;
-                }
+                        double progress = (double)totalBytesRead / fileSize * 100;
+                        Dispatcher.Invoke(() =>
+                        {
+                            ChatBox.AppendText($"Receiving {Path.GetFileName(savePath)}: {progress:F1}% complete\n");
+                        });
+                    }
 
-                client.ReceiveTimeout = 30000; // 30 seconds timeout
-                client.SendTimeout = 30000;
-
-                using (NetworkStream stream = client.GetStream())
-                using (FileStream fileStream = File.Create(savePath))
-                {
-                    byte[] buffer = new byte[8192];
-                    int bytesRead;
-                    long totalBytesRead = 0;
-                    DateTime lastRead = DateTime.Now;
-
-                    while (totalBytesRead < fileSize)
+                    if (DateTime.Now - lastRead > TimeSpan.FromSeconds(30))
                     {
-                        if (stream.DataAvailable)
-                        {
-                            bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                            if (bytesRead == 0) break;
-
-                            await fileStream.WriteAsync(buffer, 0, bytesRead);
-                            totalBytesRead += bytesRead;
-                            lastRead = DateTime.Now;
-
-                            if (totalBytesRead % (fileSize / 10) == 0)
-                            {
-                                double progress = (double)totalBytesRead / fileSize * 100;
-                                Dispatcher.Invoke(() =>
-                                {
-                                    ChatBox.AppendText($"Receiving {Path.GetFileName(savePath)}: {progress:F1}% complete\n");
-                                });
-                            }
-                        }
-                        else
-                        {
-                            if (DateTime.Now - lastRead > TimeSpan.FromSeconds(30))
-                            {
-                                throw new TimeoutException("No data received for 30 seconds.");
-                            }
-                            await Task.Delay(100);
-                        }
+                        throw new TimeoutException("No data received for 30 seconds.");
                     }
                 }
 
@@ -628,6 +616,11 @@ namespace IRC_WPF
                     ChatBox.AppendText($"Error receiving file: {ex.Message}\n");
                     MessageBox.Show($"Error receiving file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 });
+            }
+            finally
+            {
+                client?.Close();
+                client?.Dispose();
             }
         }
 
@@ -706,6 +699,25 @@ namespace IRC_WPF
                 }
             }
             throw new Exception("No network adapters with an IPv4 address in the system!");
+        }
+
+        private void AddFirewallRule(int port)
+        {
+            try
+            {
+                Process process = new Process();
+                process.StartInfo.FileName = "netsh";
+                process.StartInfo.Arguments = $"advfirewall firewall add rule name=\"IRC DCC Port {port}\" dir=in action=allow protocol=TCP localport={port}";
+                process.StartInfo.Verb = "runas";
+                process.StartInfo.CreateNoWindow = true;
+                process.StartInfo.UseShellExecute = false;
+                process.Start();
+                process.WaitForExit();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to add firewall rule: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
 
