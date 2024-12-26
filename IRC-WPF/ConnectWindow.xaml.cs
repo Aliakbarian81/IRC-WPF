@@ -5,9 +5,13 @@ namespace IRC_WPF
 {
     public partial class ConnectWindow : Window
     {
-        public string ServerAddress { get; private set; }
-        public int Port { get; private set; }
-        public string Nickname { get; private set; }
+        public string ServerAddress => ServerAddressInput.Text;
+        public int Port => int.Parse(PortInput.Text);
+        public string Nickname => NicknameInput.Text;
+        public string Username => UsernameInput.Text;
+        public string Password => PasswordInput.Password;
+        public bool UseSSLConnection => UseSSL.IsChecked ?? false;
+
 
         public ConnectWindow()
         {
@@ -16,23 +20,16 @@ namespace IRC_WPF
 
         private void ConnectButton_Click(object sender, RoutedEventArgs e)
         {
-            ServerAddress = ServerAddressInput.Text;
-            if (!int.TryParse(PortInput.Text, out int port))
+            if (string.IsNullOrWhiteSpace(ServerAddress) ||
+            string.IsNullOrWhiteSpace(Nickname) ||
+            !int.TryParse(PortInput.Text, out _))
             {
-                MessageBox.Show("Invalid port number!", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show("Please fill in all required fields correctly.", "Validation Error",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            Port = port;
-            Nickname = NicknameInput.Text;
-
-            if (string.IsNullOrWhiteSpace(ServerAddress) || string.IsNullOrWhiteSpace(Nickname))
-            {
-                MessageBox.Show("Please fill all fields.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
-            DialogResult = true; // بسته شدن با موفقیت
+            DialogResult = true;
             Close();
         }
     }

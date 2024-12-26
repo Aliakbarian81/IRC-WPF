@@ -152,6 +152,11 @@
                           Background="#2D2D2D"
                           Foreground="#E0E0E0"/>
                 <Separator/>
+                <MenuItem Header="Disconnect from Server" 
+                          Click="DisconnectMenuItem_Click"
+                          Background="#2D2D2D"
+                          Foreground="#E0E0E0"/>
+                <Separator/>
                 <MenuItem Header="Exit" 
                           Click="ExitMenuItem_Click"
                           Background="#2D2D2D"
@@ -166,7 +171,8 @@
         </Menu>
 
         <!-- Chat Area -->
-        <TabControl Name="ChatTabs" 
+        <TabControl Name="ChatTabs"
+                    SelectionChanged="ChatTabs_SelectionChanged"
                     Grid.Row="1" 
                     Grid.Column="0"
                     Margin="10"
@@ -205,9 +211,13 @@
                     <ListBox.ContextMenu>
                         <ContextMenu Background="#2D2D2D">
                             <MenuItem Header="Chat" 
-                                      Click="UserChatMenuItem_Click"
-                                      Background="#2D2D2D"
-                                      Foreground="#E0E0E0"/>
+                  Click="UserChatMenuItem_Click"
+                  Background="#2D2D2D"
+                  Foreground="#E0E0E0"/>
+                            <MenuItem Header="Send Notice" 
+                  Click="SendNoticeMenuItem_Click"
+                  Background="#2D2D2D"
+                  Foreground="#E0E0E0"/>
                         </ContextMenu>
                     </ListBox.ContextMenu>
                 </ListBox>

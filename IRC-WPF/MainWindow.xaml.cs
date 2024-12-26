@@ -21,6 +21,8 @@ namespace IRC_WPF
         private StreamReader reader;
         private HashSet<string> users = new HashSet<string>();
         private HashSet<string> channels = new HashSet<string>();
+        private Dictionary<string, HashSet<string>> channelUsers = new Dictionary<string, HashSet<string>>();
+        private string currentTab = "General Chat";
         private string currentChannel = "#default";
         private bool _channelsLoaded = false;
 
@@ -46,6 +48,17 @@ namespace IRC_WPF
                     {
                         await writer.WriteLineAsync("LIST");
                         listRequested = true;
+                    }
+
+                    if (response.Contains("NOTICE"))
+                    {
+                        string message = response.Substring(response.IndexOf(':', 1) + 1);
+                        string sender = GetUserFromResponse(response);
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            ChatBox.AppendText($"NOTICE from {sender}: {message}\n");
+                        });
                     }
 
                     if (response.Contains("PRIVMSG"))
@@ -164,6 +177,89 @@ namespace IRC_WPF
             }
         }
 
+
+        private async Task ConnectToServer(string server, int port, string nickname, string username = null, string password = null)
+        {
+            try
+            {
+                TcpClient client = new TcpClient(server, port);
+                NetworkStream stream = client.GetStream();
+                writer = new StreamWriter(stream) { AutoFlush = true };
+                reader = new StreamReader(stream);
+
+                await writer.WriteLineAsync($"NICK {nickname}");
+
+                // If username is provided, use it; otherwise, use nickname
+                string userCommand = $"USER {(username ?? nickname)} 0 * :{nickname}";
+                await writer.WriteLineAsync(userCommand);
+
+                // If password is provided, send it
+                if (!string.IsNullOrEmpty(password))
+                {
+                    await writer.WriteLineAsync($"PASS {password}");
+                }
+
+                _ = Task.Run(() => ListenForMessages());
+                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void UpdateChannelUsers(string channel, IEnumerable<string> users)
+        {
+            if (!channelUsers.ContainsKey(channel))
+            {
+                channelUsers[channel] = new HashSet<string>();
+            }
+
+            channelUsers[channel].Clear();
+            foreach (var user in users)
+            {
+                channelUsers[channel].Add(user);
+            }
+
+            UpdateUsersListForCurrentTab();
+        }
+
+        private void UpdateUsersListForCurrentTab()
+        {
+            Dispatcher.Invoke(() =>
+            {
+                UsersList.Items.Clear();
+
+                if (currentTab == "General Chat")
+                {
+                    // Show server-wide users
+                    foreach (var user in users)
+                    {
+                        UsersList.Items.Add(user);
+                    }
+                }
+                else if (channelUsers.ContainsKey(currentTab))
+                {
+                    // Show channel-specific users
+                    foreach (var user in channelUsers[currentTab])
+                    {
+                        UsersList.Items.Add(user);
+                    }
+                }
+
+                SortListBox(UsersList);
+            });
+        }
+
+        private void ChatTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (ChatTabs.SelectedItem is TabItem selectedTab)
+            {
+                currentTab = selectedTab.Header.ToString();
+                UpdateUsersListForCurrentTab();
+            }
+        }
+
         // اتصال به سرور
         private async void ConnectMenuItem_Click(object sender, RoutedEventArgs e)
         {
@@ -173,25 +269,11 @@ namespace IRC_WPF
                 string serverAddress = connectWindow.ServerAddress;
                 int port = connectWindow.Port;
                 string nickname = connectWindow.Nickname;
+                string username = connectWindow.Username;
+                string password = connectWindow.Password;
 
-                // اتصال به سرور با اطلاعات وارد شده
-                try
-                {
-                    TcpClient client = new TcpClient(serverAddress, port);
-                    NetworkStream stream = client.GetStream();
-                    writer = new StreamWriter(stream) { AutoFlush = true };
-                    reader = new StreamReader(stream);
+                await ConnectToServer(serverAddress, port, nickname, username, password);
 
-                    await writer.WriteLineAsync($"NICK {nickname}");
-                    await writer.WriteLineAsync($"USER {nickname} 0 * :{nickname}");
-                    _ = Task.Run(() => ListenForMessages());
-
-                    MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
             }
         }
 
@@ -717,6 +799,73 @@ namespace IRC_WPF
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to add firewall rule: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+
+        private async void DisconnectMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (writer != null)
+            {
+                try
+                {
+                    await writer.WriteLineAsync("QUIT :Disconnecting");
+                    writer.Close();
+                    reader.Close();
+
+                    // Clear all lists and dictionaries
+                    users.Clear();
+                    channels.Clear();
+                    channelUsers.Clear();
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        UsersList.Items.Clear();
+                        ChannelsList.Items.Clear();
+                        ChatBox.Clear();
+
+                        // Remove all tabs except General Chat
+                        var generalTab = ChatTabs.Items.Cast<TabItem>()
+                            .FirstOrDefault(t => t.Header.ToString() == "General Chat");
+
+                        ChatTabs.Items.Clear();
+                        if (generalTab != null)
+                            ChatTabs.Items.Add(generalTab);
+                    });
+
+                    MessageBox.Show("Disconnected from server.", "Disconnected", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Error while disconnecting: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
+
+        public async Task SendNotice(string target, string message)
+        {
+            if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(message))
+                return;
+
+            await writer.WriteLineAsync($"NOTICE {target} :{message}");
+            Dispatcher.Invoke(() =>
+            {
+                // Display the notice in the appropriate chat tab
+                AppendMessageToTab(target, $"-> {target} NOTICE: {message}");
+            });
+        }
+
+        // Add this button click handler to the context menu for users
+        private async void SendNoticeMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (UsersList.SelectedItem is string selectedUser)
+            {
+                var noticeWindow = new InputDialog("Send Notice", "Enter your notice message:");
+                if (noticeWindow.ShowDialog() == true)
+                {
+                    await SendNotice(selectedUser, noticeWindow.ResponseText);
+                }
             }
         }
 
