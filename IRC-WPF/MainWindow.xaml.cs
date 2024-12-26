@@ -11,6 +11,7 @@ using System.Windows.Media.Imaging;
 using System.Windows.Media;
 using System.Diagnostics;
 using System.Net;
+using System.Net.Security;
 
 
 namespace IRC_WPF
@@ -183,23 +184,68 @@ namespace IRC_WPF
             try
             {
                 TcpClient client = new TcpClient(server, port);
-                NetworkStream stream = client.GetStream();
+
+                Stream stream = client.GetStream();
+                // استفاده از SSL اگر سرور به آن نیاز دارد
+                if (port == 6697)
+                {
+                    SslStream sslStream = new SslStream(stream);
+                    await sslStream.AuthenticateAsClientAsync(server);
+                    stream = sslStream;
+                }
+
                 writer = new StreamWriter(stream) { AutoFlush = true };
                 reader = new StreamReader(stream);
 
-                await writer.WriteLineAsync($"NICK {nickname}");
-
-                // If username is provided, use it; otherwise, use nickname
-                string userCommand = $"USER {(username ?? nickname)} 0 * :{nickname}";
-                await writer.WriteLineAsync(userCommand);
-
-                // If password is provided, send it
                 if (!string.IsNullOrEmpty(password))
                 {
                     await writer.WriteLineAsync($"PASS {password}");
                 }
 
+                await writer.WriteLineAsync($"NICK {nickname}");
+                string realname = username ?? nickname; // اگر username داده نشده بود از nickname استفاده می‌کنیم
+                await writer.WriteLineAsync($"USER {nickname} 0 * :{realname}");
+
                 _ = Task.Run(() => ListenForMessages());
+
+                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+
+
+
+        private async Task ConnectToServer2(string server, int port, string nickname, string username = null, string password = null)
+        {
+            try
+            {
+                TcpClient client = new TcpClient(server, port);
+                NetworkStream stream = client.GetStream();
+                writer = new StreamWriter(stream) { AutoFlush = true };
+                reader = new StreamReader(stream);
+
+                // اول پسورد رو می‌فرستیم (اگر وجود داشته باشه)
+                if (!string.IsNullOrEmpty(password))
+                {
+                    await writer.WriteLineAsync($"PASS {password}");
+                    await Task.Delay(1000); // تاخیر 1 ثانیه‌ای
+                }
+
+                // بعد نیک‌نیم رو می‌فرستیم
+                await writer.WriteLineAsync($"NICK {nickname}");
+                await Task.Delay(1000);
+
+                // و در نهایت اطلاعات یوزر رو با جزئیات بیشتر می‌فرستیم
+                //string realname = username ?? nickname;
+                //await writer.WriteLineAsync($"USER {nickname} 8 * :{realname}");
+                //await Task.Delay(1000);
+
+                _ = Task.Run(() => ListenForMessages());
+
                 MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
