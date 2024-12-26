@@ -113,34 +113,52 @@ namespace IRC_WPF
                             RemoveUser(user);
                         }
                     }
-                    if (response.Contains("DCC SEND"))
+                    if (response.Contains("PRIVMSG") && response.Contains("DCC SEND"))
                     {
-                        string cleanResponse = response.Replace("\u0001", "");
-                        string[] parts = cleanResponse.Split(' ');
-
-                        if (parts.Length >= 7)
+                        try
                         {
+                            // پردازش پیام DCC
                             string sender = GetUserFromResponse(response);
-                            string fileName = parts[5].TrimStart(':');
-                            string ipAddress = IntegerToIP(int.Parse(parts[6]));
-                            int port = int.Parse(parts[7]);
-                            long fileSize = long.Parse(parts[8]);
+                            int startIndex = response.IndexOf("DCC SEND") + 9;
+                            int endIndex = response.LastIndexOf("\u0001");
+                            if (endIndex == -1) endIndex = response.Length;
 
+                            string dccData = response.Substring(startIndex, endIndex - startIndex).Trim();
+                            string[] dccParams = dccData.Split(' ');
+
+                            if (dccParams.Length >= 4)
+                            {
+                                string fileName = dccParams[0];
+                                string ipAddressInt = dccParams[1];
+                                string port = dccParams[2];
+                                string fileSize = dccParams[3].Replace("\u0001", "");
+
+                                string ipAddress = IntegerToIP(long.Parse(ipAddressInt));
+
+                                Dispatcher.Invoke(() =>
+                                {
+                                    var result = MessageBox.Show(
+                                        $"Accept file '{fileName}' from {sender}?\nSize: {long.Parse(fileSize) / 1024} KB",
+                                        "File Transfer Request",
+                                        MessageBoxButton.YesNo,
+                                        MessageBoxImage.Question
+                                    );
+
+                                    if (result == MessageBoxResult.Yes)
+                                    {
+                                        _ = ReceiveFileAsync(fileName, ipAddress, int.Parse(port), long.Parse(fileSize));
+                                    }
+                                });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
                             Dispatcher.Invoke(() =>
                             {
-                                if (MessageBox.Show($"Accept file '{fileName}' from {sender} ({fileSize / 1024} KB)?",
-                                                    "File Transfer Request",
-                                                    MessageBoxButton.YesNo,
-                                                    MessageBoxImage.Question) == MessageBoxResult.Yes)
-                                {
-                                    _ = ReceiveFileAsync(fileName, ipAddress, port, fileSize);
-                                }
+                                ChatBox.AppendText($"Error processing DCC request: {ex.Message}\n");
                             });
                         }
                     }
-
-
-
 
                 }
             }
@@ -430,31 +448,87 @@ namespace IRC_WPF
         // ارسال فایل
         public async Task SendFileRequestAsync(string filePath, string recipient)
         {
-            int port = new Random().Next(49152, 65535);
-            string fileName = Path.GetFileName(filePath);
-            long fileSize = new FileInfo(filePath).Length;
-
-            TcpListener listener = new TcpListener(IPAddress.Any, port);
-            listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            listener.Start();
-
-            string localIP = GetPublicIPAddress();
-            long ipAsLong = IPToInteger(localIP);
-
-            string dccMessage = $"\u0001DCC SEND {fileName} {ipAsLong} {port} {fileSize}\u0001";
-            await writer.WriteLineAsync($"PRIVMSG {recipient} :{dccMessage}");
-
-            _ = Task.Run(async () =>
+            try
             {
-                using TcpClient client = await listener.AcceptTcpClientAsync();
-                using var stream = client.GetStream();
-                using var fileStream = File.OpenRead(filePath);
+                int port = 8001;
+                string fileName = Path.GetFileName(filePath);
+                long fileSize = new FileInfo(filePath).Length;
 
-                await fileStream.CopyToAsync(stream);
-                Console.WriteLine("File sent successfully!");
+                var listener = new TcpListener(IPAddress.Any, port);
+                listener.Start();
+
+                string localIP = GetLocalIPAddress();
+                long ipAsLong = IPToInteger(localIP);
+
+                string dccMessage = $"\u0001DCC SEND {fileName} {ipAsLong} {port} {fileSize}\u0001";
+                await writer.WriteLineAsync($"PRIVMSG {recipient} :{dccMessage}");
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"Waiting for {recipient} to accept file transfer...");
+                });
+
+                // تنظیم تایم‌اوت برای پذیرش اتصال
+                using var cts = new CancellationTokenSource();
+                cts.CancelAfter(TimeSpan.FromMinutes(1));
+
+                TcpClient client;
+                try
+                {
+                    client = await Task.Run(() => listener.AcceptTcpClientAsync(), cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        AppendMessageToTab(recipient, "File transfer timed out.");
+                    });
+                    listener.Stop();
+                    return;
+                }
+
+                using (client)
+                using (NetworkStream stream = client.GetStream())
+                using (FileStream fileStream = File.OpenRead(filePath))
+                {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    long totalBytesSent = 0;
+
+                    while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                    {
+                        await stream.WriteAsync(buffer, 0, bytesRead);
+                        totalBytesSent += bytesRead;
+
+                        if (totalBytesSent % (fileSize / 10) == 0)
+                        {
+                            double progress = (double)totalBytesSent / fileSize * 100;
+                            Dispatcher.Invoke(() =>
+                            {
+                                AppendMessageToTab(recipient, $"Sending: {progress:F1}% complete");
+                            });
+                        }
+                    }
+
+                    // اطمینان از ارسال تمام داده‌ها
+                    await stream.FlushAsync();
+                }
 
                 listener.Stop();
-            });
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"File {fileName} sent successfully!");
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"Error sending file: {ex.Message}");
+                    MessageBox.Show($"Error sending file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
+            }
         }
 
 
@@ -462,37 +536,98 @@ namespace IRC_WPF
         // دریافت فایل
         public async Task ReceiveFileAsync(string fileName, string ipAddress, int port, long fileSize)
         {
-            Console.WriteLine($"Connecting to IP: {ipAddress}, Port: {port}");
-
             try
             {
-                using TcpClient client = new TcpClient();
-
-                await client.ConnectAsync(ipAddress, port);
-                Console.WriteLine("Connected to the server!");
-
-                using var stream = client.GetStream();
-                using var fileStream = File.Create(fileName);
-
-                byte[] buffer = new byte[8192];
-                int bytesRead;
-                long totalBytesRead = 0;
-
-                while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                string savePath;
+                var saveDialog = new Microsoft.Win32.SaveFileDialog
                 {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead);
-                    totalBytesRead += bytesRead;
+                    FileName = fileName,
+                    DefaultExt = Path.GetExtension(fileName),
+                    Filter = "All files (*.*)|*.*"
+                };
 
-                    Console.WriteLine($"Received {totalBytesRead} of {fileSize} bytes");
-                    if (totalBytesRead >= fileSize)
-                        break;
+                bool? dialogResult = Dispatcher.Invoke(() => saveDialog.ShowDialog());
+
+                if (dialogResult != true)
+                {
+                    return;
                 }
 
-                Console.WriteLine($"File '{fileName}' received successfully!");
+                savePath = saveDialog.FileName;
+
+                using var client = new TcpClient();
+
+                // تنظیم تایم‌اوت برای اتصال
+                using var cts = new CancellationTokenSource();
+                cts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                try
+                {
+                    await client.ConnectAsync(ipAddress, port).WaitAsync(cts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        ChatBox.AppendText("Connection timed out.\n");
+                    });
+                    return;
+                }
+
+                client.ReceiveTimeout = 30000; // 30 seconds timeout
+                client.SendTimeout = 30000;
+
+                using (NetworkStream stream = client.GetStream())
+                using (FileStream fileStream = File.Create(savePath))
+                {
+                    byte[] buffer = new byte[8192];
+                    int bytesRead;
+                    long totalBytesRead = 0;
+                    DateTime lastRead = DateTime.Now;
+
+                    while (totalBytesRead < fileSize)
+                    {
+                        if (stream.DataAvailable)
+                        {
+                            bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                            if (bytesRead == 0) break;
+
+                            await fileStream.WriteAsync(buffer, 0, bytesRead);
+                            totalBytesRead += bytesRead;
+                            lastRead = DateTime.Now;
+
+                            if (totalBytesRead % (fileSize / 10) == 0)
+                            {
+                                double progress = (double)totalBytesRead / fileSize * 100;
+                                Dispatcher.Invoke(() =>
+                                {
+                                    ChatBox.AppendText($"Receiving {Path.GetFileName(savePath)}: {progress:F1}% complete\n");
+                                });
+                            }
+                        }
+                        else
+                        {
+                            if (DateTime.Now - lastRead > TimeSpan.FromSeconds(30))
+                            {
+                                throw new TimeoutException("No data received for 30 seconds.");
+                            }
+                            await Task.Delay(100);
+                        }
+                    }
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    ChatBox.AppendText($"File saved successfully to: {savePath}\n");
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to receive file '{fileName}': {ex.Message}");
+                Dispatcher.Invoke(() =>
+                {
+                    ChatBox.AppendText($"Error receiving file: {ex.Message}\n");
+                    MessageBox.Show($"Error receiving file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
             }
         }
 
@@ -527,25 +662,22 @@ namespace IRC_WPF
         // تبدیل آی پی به عدد
         private long IPToInteger(string ipAddress)
         {
-            return ipAddress.Split('.')
-                            .Select(byte.Parse)
-                            .Aggregate(0L, (acc, part) => (acc << 8) + part);
+            var parts = ipAddress.Split('.');
+            long result = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                result = (result << 8) | byte.Parse(parts[i]);
+            }
+            return result;
         }
 
 
 
         // تبتدیل عدد به آی پی
-        private string IntegerToIP(long ipAddress)
+        private string IntegerToIP(long ipInt)
         {
-            return string.Join(".", new[]
-            {
-        (ipAddress >> 24) & 0xFF,
-        (ipAddress >> 16) & 0xFF,
-        (ipAddress >> 8) & 0xFF,
-        ipAddress & 0xFF
-    });
+            return $"{(ipInt >> 24) & 0xFF}.{(ipInt >> 16) & 0xFF}.{(ipInt >> 8) & 0xFF}.{ipInt & 0xFF}";
         }
-
 
         // دریافت آدرس گلوبال
         private string GetPublicIPAddress()
@@ -561,6 +693,19 @@ namespace IRC_WPF
             {
                 throw new Exception("Unable to retrieve public IP address.", ex);
             }
+        }
+
+        private string GetLocalIPAddress()
+        {
+            var host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (var ip in host.AddressList)
+            {
+                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                {
+                    return ip.ToString();
+                }
+            }
+            throw new Exception("No network adapters with an IPv4 address in the system!");
         }
 
 
