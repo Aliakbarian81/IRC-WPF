@@ -184,28 +184,14 @@ namespace IRC_WPF
             try
             {
                 TcpClient client = new TcpClient(server, port);
-
-                Stream stream = client.GetStream();
-                // استفاده از SSL اگر سرور به آن نیاز دارد
-                if (port == 6697)
-                {
-                    SslStream sslStream = new SslStream(stream);
-                    await sslStream.AuthenticateAsClientAsync(server);
-                    stream = sslStream;
-                }
-
+                NetworkStream stream = client.GetStream();
                 writer = new StreamWriter(stream) { AutoFlush = true };
                 reader = new StreamReader(stream);
 
-                if (!string.IsNullOrEmpty(password))
-                {
-                    await writer.WriteLineAsync($"PASS {password}");
-                }
-
                 await writer.WriteLineAsync($"NICK {nickname}");
-                string realname = username ?? nickname; // اگر username داده نشده بود از nickname استفاده می‌کنیم
+                string realname = username ?? nickname;
                 await writer.WriteLineAsync($"USER {nickname} 0 * :{realname}");
-
+                await writer.WriteLineAsync($"USER {nickname} 0 * :{nickname}");
                 _ = Task.Run(() => ListenForMessages());
 
                 MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -213,7 +199,8 @@ namespace IRC_WPF
             catch (Exception ex)
             {
                 MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+            }               
+
         }
 
 
