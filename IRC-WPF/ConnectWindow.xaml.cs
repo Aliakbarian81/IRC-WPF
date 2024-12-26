@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Windows;
+using System.Windows.Input;
 
 namespace IRC_WPF
 {
@@ -31,6 +32,14 @@ namespace IRC_WPF
 
             DialogResult = true;
             Close();
+        }
+
+        private void Window_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Enter)
+            {
+                ConnectButton_Click(sender, e);
+            }
         }
     }
 }

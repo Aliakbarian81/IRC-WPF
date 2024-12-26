@@ -12,6 +12,7 @@ using System.Windows.Media;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
+using System.Windows.Input;
 
 
 namespace IRC_WPF
@@ -26,6 +27,12 @@ namespace IRC_WPF
         private string currentTab = "General Chat";
         private string currentChannel = "#default";
         private bool _channelsLoaded = false;
+        private LoadingWindow loadingWindow;
+        private bool isDarkTheme = true;
+        private HashSet<string> closedTabs = new HashSet<string>();
+        private string currentNickname;
+
+
 
 
 
@@ -33,22 +40,35 @@ namespace IRC_WPF
         public MainWindow()
         {
             InitializeComponent();
+            loadingWindow = new LoadingWindow();
+
         }
 
         // حلقه نامحدود برای دریافت پاسخ از سرور
         private async Task ListenForMessages()
         {
             bool listRequested = false;
+            bool usersRequested = false;
 
             while (true)
             {
                 string response = await reader.ReadLineAsync();
                 if (response != null)
                 {
+                    if (response.Contains("Welcome"))
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            loadingWindow.Close();
+                        });
+                    }
                     if (!listRequested && response.Contains("Welcome"))
                     {
                         await writer.WriteLineAsync("LIST");
+                        await writer.WriteLineAsync("WHO *");
                         listRequested = true;
+                        usersRequested = true;
+
                     }
 
                     if (response.Contains("NOTICE"))
@@ -100,31 +120,126 @@ namespace IRC_WPF
                                 _channelsLoaded = true;
                             });
                         }
+                        if (response.Contains(" 352 "))
+                        {
+                            string[] parts = response.Split(' ');
+                            if (parts.Length >= 8)
+                            {
+                                string username = parts[7];
+                                AddUser(username);
+                            }
+                        }
                         else if (response.Contains("353"))
                         {
-                            string usersPart = response.Substring(response.LastIndexOf(':') + 1).Trim();
-                            string[] usersArray = usersPart.Split(' ');
-                            AddUsers(usersArray);
+                            string[] parts = response.Split(' ');
+                            if (parts.Length >= 6)
+                            {
+                                string channel = parts[4];
+                                string usersPart = response.Substring(response.LastIndexOf(':') + 1).Trim();
+                                string[] channelUsersList = usersPart.Split(' ');
+
+                                if (!channelUsers.ContainsKey(channel))
+                                {
+                                    channelUsers[channel] = new HashSet<string>();
+                                }
+
+                                foreach (string user in channelUsersList)
+                                {
+                                    string cleanUser = user.TrimStart('@', '+', '~', '&', '%');
+                                    channelUsers[channel].Add(cleanUser);
+                                }
+
+                                // Update the users list if we're currently on this channel's tab
+                                if (currentTab == channel)
+                                {
+                                    UpdateUsersListForCurrentTab();
+                                }
+                            }
                         }
                         else if (response.Contains("JOIN"))
                         {
                             string user = GetUserFromResponse(response);
+                            string channel = response.Split(new[] { ' ' }, 3)[2].TrimStart(':');
+
+                            // Only create a tab if the current user joined the channel
+                            string currentNick = GetCurrentNickname(); // You'll need to track this when connecting
+                            if (user == currentNickname && !response.Contains("AUTO"))
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    // Check if we already have this tab
+                                    if (!ChatTabs.Items.Cast<TabItem>().Any(tab => tab.Header.ToString() == channel))
+                                    {
+                                        CreateChatTab(channel);
+                                    }
+                                });
+                            }
+
+                            // Add user to channel's user list
                             Dispatcher.Invoke(() =>
                             {
-                                TabItem channelTab = ChatTabs.Items.Cast<TabItem>()
-                                    .FirstOrDefault(tab => tab.Header.ToString() == currentChannel);
-
-                                if (channelTab?.Content is Grid grid)
+                                if (!channelUsers.ContainsKey(channel))
                                 {
-                                    TextBox chatBox = grid.Children.OfType<TextBox>().FirstOrDefault();
-                                    chatBox?.AppendText($"{user} joined the channel.\n");
+                                    channelUsers[channel] = new HashSet<string>();
                                 }
+                                channelUsers[channel].Add(user);
+
+                                if (currentTab == channel)
+                                {
+                                    if (!UsersList.Items.Contains(user))
+                                    {
+                                        UsersList.Items.Add(user);
+                                        SortListBox(UsersList);
+                                    }
+                                }
+
+                                AppendMessageToTab(channel, $"{user} has joined the channel");
                             });
                         }
                         else if (response.Contains("PART") || response.Contains("QUIT"))
                         {
                             string user = GetUserFromResponse(response);
-                            RemoveUser(user);
+                            string channel = "";
+
+                            if (response.Contains("PART"))
+                            {
+                                channel = response.Split(new[] { ' ' }, 3)[2].TrimStart(':');
+                            }
+
+                            Dispatcher.Invoke(() =>
+                            {
+                                if (response.Contains("PART"))
+                                {
+                                    // Remove user from specific channel
+                                    if (channelUsers.ContainsKey(channel))
+                                    {
+                                        channelUsers[channel].Remove(user);
+                                        if (currentTab == channel)
+                                        {
+                                            UsersList.Items.Remove(user);
+                                        }
+                                    }
+                                    AppendMessageToTab(channel, $"{user} has left the channel");
+                                }
+                                else // QUIT
+                                {
+                                    // Remove user from all channels
+                                    foreach (var channelUsers in channelUsers.Values)
+                                    {
+                                        channelUsers.Remove(user);
+                                    }
+                                    users.Remove(user);
+                                    UsersList.Items.Remove(user);
+
+                                    foreach (TabItem tab in ChatTabs.Items)
+                                    {
+                                        if (tab.Header.ToString().StartsWith("#"))
+                                        {
+                                            AppendMessageToTab(tab.Header.ToString(), $"{user} has quit");
+                                        }
+                                    }
+                                }
+                            });
                         }
                     }
                     if (response.Contains("PRIVMSG") && response.Contains("DCC SEND"))
@@ -180,100 +295,47 @@ namespace IRC_WPF
 
         private async Task ConnectToServer(string server, int port, string nickname, string username = null, string password = null)
         {
+            loadingWindow.Show();
+            currentNickname = nickname;
+
             try
             {
-                // ایجاد اتصال TCP
-                TcpClient client = new TcpClient(server, port);
-                NetworkStream stream = client.GetStream();
-                writer = new StreamWriter(stream) { AutoFlush = true };
-                reader = new StreamReader(stream);
-
-                // ارسال رمز عبور اگر وارد شده باشد
-                if (!string.IsNullOrEmpty(password))
+                await Task.Run(async () =>
                 {
-                    await writer.WriteLineAsync($"PASS {password}");
-                }
+                    TcpClient client = new TcpClient(server, port);
+                    NetworkStream stream = client.GetStream();
+                    writer = new StreamWriter(stream) { AutoFlush = true };
+                    reader = new StreamReader(stream);
 
-                // ارسال نیک‌نیم
-                await writer.WriteLineAsync($"NICK {nickname}");
+                    if (!string.IsNullOrEmpty(password))
+                    {
+                        await writer.WriteLineAsync($"PASS {password}");
+                    }
 
-                // ارسال دستور USER
-                string realName = username ?? nickname; // اگر یوزرنیم وارد نشده باشد، از نیک‌نیم استفاده می‌کنیم
-                await writer.WriteLineAsync($"USER {realName} 0 * :{realName}");
+                    await writer.WriteLineAsync($"NICK {nickname}");
+                    string realName = username ?? nickname;
+                    await writer.WriteLineAsync($"USER {realName} 0 * :{realName}");
+                });
 
-                // شروع گوش دادن به پیام‌ها
+                // Start listening for messages
                 _ = Task.Run(() => ListenForMessages());
-
-                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
-
-
-        private async Task ConnectToServer3(string server, int port, string nickname, string username = null, string password = null)
-        {
-            try
-            {
-                TcpClient client = new TcpClient(server, port);
-                NetworkStream stream = client.GetStream();
-                writer = new StreamWriter(stream) { AutoFlush = true };
-                reader = new StreamReader(stream);
-
-                await writer.WriteLineAsync($"NICK {nickname}");
-                string realname = username ?? nickname;
-                await writer.WriteLineAsync($"USER {nickname} 0 * :{realname}");
-                await writer.WriteLineAsync($"USER {nickname} 0 * :{nickname}");
-                _ = Task.Run(() => ListenForMessages());
-
-                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            }               
-
-        }
-
-
-
-
-        private async Task ConnectToServer2(string server, int port, string nickname, string username = null, string password = null)
-        {
-            try
-            {
-                TcpClient client = new TcpClient(server, port);
-                NetworkStream stream = client.GetStream();
-                writer = new StreamWriter(stream) { AutoFlush = true };
-                reader = new StreamReader(stream);
-
-                // اول پسورد رو می‌فرستیم (اگر وجود داشته باشه)
-                if (!string.IsNullOrEmpty(password))
+                Dispatcher.Invoke(() =>
                 {
-                    await writer.WriteLineAsync($"PASS {password}");
-                    await Task.Delay(1000); // تاخیر 1 ثانیه‌ای
-                }
-
-                // بعد نیک‌نیم رو می‌فرستیم
-                await writer.WriteLineAsync($"NICK {nickname}");
-                await Task.Delay(1000);
-
-                // و در نهایت اطلاعات یوزر رو با جزئیات بیشتر می‌فرستیم
-                //string realname = username ?? nickname;
-                //await writer.WriteLineAsync($"USER {nickname} 8 * :{realname}");
-                //await Task.Delay(1000);
-
-                _ = Task.Run(() => ListenForMessages());
-
-                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    loadingWindow.Close();
+                    MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
             }
         }
+
+        private string GetCurrentNickname()
+        {
+            return currentNickname;
+        }
+
+
 
         private void UpdateChannelUsers(string channel, IEnumerable<string> users)
         {
@@ -316,6 +378,22 @@ namespace IRC_WPF
 
                 SortListBox(UsersList);
             });
+        }
+
+
+        private void AddUser(string username)
+        {
+            if (!string.IsNullOrEmpty(username))
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    if (users.Add(username) && !UsersList.Items.Contains(username))
+                    {
+                        UsersList.Items.Add(username);
+                        SortListBox(UsersList);
+                    }
+                });
+            }
         }
 
         private void ChatTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -429,6 +507,10 @@ namespace IRC_WPF
         // ساخت تب جدید برای چت
         private void CreateChatTab(string header)
         {
+            if (closedTabs.Contains(header))
+                return;
+
+
             Grid chatGrid = new Grid();
             chatGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
             chatGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -492,6 +574,15 @@ namespace IRC_WPF
                 Height = 50,
                 Margin = new Thickness(5, 0, 5, 0)
             };
+            messageInput.KeyDown += (sender, e) =>
+            {
+                if (e.Key == Key.Enter)
+                {
+                    SendMessage(header, messageInput.Text);
+                    messageInput.Clear();
+                    e.Handled = true;
+                }
+            };
             Grid.SetColumn(messageInput, 1);
 
 
@@ -532,46 +623,101 @@ namespace IRC_WPF
             ChatTabs.SelectedItem = newTab;
         }
 
-
-
         // بستن تب ها
-        private void CloseTab_Click(object sender, RoutedEventArgs e)
+        private async void CloseTab_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button button && button.Tag is TabItem tab)
             {
                 if (tab.Tag is bool canClose && canClose)
                 {
-                    ChatTabs.Items.Remove(tab);
+                    string tabHeader = tab.Header.ToString();
+
+                    // Check if this is a channel tab
+                    if (tabHeader.StartsWith("#"))
+                    {
+                        // Add to closed tabs set
+                        closedTabs.Add(tabHeader);
+
+                        // Send PART command before closing the tab
+                        await writer.WriteLineAsync($"PART {tabHeader}");
+
+                        // Remove the channel's users from tracking
+                        if (channelUsers.ContainsKey(tabHeader))
+                        {
+                            channelUsers.Remove(tabHeader);
+                        }
+
+                        // Remove the tab immediately
+                        ChatTabs.Items.Remove(tab);
+
+                        // Select the General Chat tab if it exists
+                        var generalTab = ChatTabs.Items.Cast<TabItem>()
+                            .FirstOrDefault(t => t.Header.ToString() == "General Chat");
+                        if (generalTab != null)
+                        {
+                            ChatTabs.SelectedItem = generalTab;
+                        }
+                    }
+                    else
+                    {
+                        ChatTabs.Items.Remove(tab);
+                    }
                 }
             }
         }
 
 
-
         // منوی چت برای کلیک راست کاربران
-        private void UserChatMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void UserChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (UsersList.SelectedItem is string selectedUser)
             {
-                CreateChatTab($"{selectedUser}");
+                // Check if tab already exists
+                TabItem existingTab = ChatTabs.Items.Cast<TabItem>()
+                    .FirstOrDefault(tab => tab.Header.ToString() == selectedUser);
+
+                if (existingTab != null)
+                {
+                    ChatTabs.SelectedItem = existingTab;
+                }
+                else
+                {
+                    CreateChatTab(selectedUser);
+                }
             }
         }
+
 
         // منوی چت برای کلیک راست کانال ها
         private async void ChannelChatMenuItem_Click(object sender, RoutedEventArgs e)
         {
             if (ChannelsList.SelectedItem is string selectedChannel)
             {
-                await writer.WriteLineAsync($"JOIN {selectedChannel}");
-                currentChannel = selectedChannel;
+                // Remove from closedTabs if it exists
+                closedTabs.Remove(selectedChannel);
 
-                Dispatcher.Invoke(() =>
+                // Check if tab already exists
+                TabItem existingTab = ChatTabs.Items.Cast<TabItem>()
+                    .FirstOrDefault(tab => tab.Header.ToString() == selectedChannel);
+
+                if (existingTab != null)
                 {
-                    ChatBox.AppendText($"Joining channel: {selectedChannel}\n");
-                    CreateChatTab(selectedChannel);
-                });
+                    ChatTabs.SelectedItem = existingTab;
+                }
+                else
+                {
+                    await writer.WriteLineAsync($"JOIN {selectedChannel}");
+                    currentChannel = selectedChannel;
+
+                    Dispatcher.Invoke(() =>
+                    {
+                        ChatBox.AppendText($"Joining channel: {selectedChannel}\n");
+                        CreateChatTab(selectedChannel);
+                    });
+                }
             }
         }
+
 
 
         // مرتب کردن لیست ها بر اساس حروف الفبا
@@ -938,7 +1084,171 @@ namespace IRC_WPF
             }
         }
 
+        private async void SendChannelNoticeMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (ChannelsList.SelectedItem is string selectedChannel)
+            {
+                var noticeWindow = new InputDialog("Send Channel Notice", "Enter your notice message:");
+                if (noticeWindow.ShowDialog() == true)
+                {
+                    await SendChannelNotice(selectedChannel, noticeWindow.ResponseText);
+                }
+            }
+        }
 
+        public async Task SendChannelNotice(string channel, string message)
+        {
+            if (string.IsNullOrWhiteSpace(channel) || string.IsNullOrWhiteSpace(message))
+                return;
+
+            await writer.WriteLineAsync($"NOTICE {channel} :{message}");
+            Dispatcher.Invoke(() =>
+            {
+                AppendMessageToTab(channel, $"-> {channel} NOTICE: {message}");
+            });
+        }
+
+
+        private void InitializeTheme()
+        {
+            ApplyTheme(isDarkTheme);
+        }
+
+        private void ApplyTheme(bool isDark)
+        {
+            var app = Application.Current;
+            var resources = app.Resources;
+
+            var theme = isDark ? new Dictionary<string, string>
+            {
+                ["WindowBackground"] = "#1E1E1E",
+                ["ControlBackground"] = "#2D2D2D",
+                ["TextColor"] = "#E0E0E0",
+                ["BorderColor"] = "#3F3F3F",
+                ["AccentColor"] = "#007ACC",
+                ["MenuBackground"] = "#252526",
+                ["MenuItemBackground"] = "#2D2D2D",
+                ["TabBackground"] = "#252526",
+                ["TabItemBackground"] = "#2D2D2D",
+                ["ListBoxBackground"] = "#2D2D2D"
+            } : new Dictionary<string, string>
+            {
+                ["WindowBackground"] = "#F0F0F0",
+                ["ControlBackground"] = "#FFFFFF",
+                ["TextColor"] = "#000000",
+                ["BorderColor"] = "#CCCCCC",
+                ["AccentColor"] = "#0078D4",
+                ["MenuBackground"] = "#F5F5F5",
+                ["MenuItemBackground"] = "#FFFFFF",
+                ["TabBackground"] = "#F5F5F5",
+                ["TabItemBackground"] = "#FFFFFF",
+                ["ListBoxBackground"] = "#FFFFFF"
+            };
+
+            // Update all resource brushes
+            foreach (var (key, color) in theme)
+            {
+                resources[key] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(color));
+            }
+
+            // Update Window
+            Background = (SolidColorBrush)resources["WindowBackground"];
+
+            // Update Menu
+            if (FindName("MainMenu") is Menu mainMenu)
+            {
+                mainMenu.Background = (SolidColorBrush)resources["MenuBackground"];
+                foreach (var menuItem in mainMenu.Items.OfType<MenuItem>())
+                {
+                    menuItem.Foreground = (SolidColorBrush)resources["TextColor"];
+                    foreach (var subMenuItem in menuItem.Items.OfType<MenuItem>())
+                    {
+                        subMenuItem.Background = (SolidColorBrush)resources["MenuItemBackground"];
+                        subMenuItem.Foreground = (SolidColorBrush)resources["TextColor"];
+                    }
+                }
+            }
+
+            // Update all TabControls
+            foreach (TabControl tabControl in FindVisualChildren<TabControl>(this))
+            {
+                tabControl.Background = (SolidColorBrush)resources["TabBackground"];
+                foreach (TabItem tab in tabControl.Items)
+                {
+                    UpdateTabItem(tab, resources);
+                }
+            }
+
+            // Update all ListBoxes
+            foreach (ListBox listBox in FindVisualChildren<ListBox>(this))
+            {
+                listBox.Background = (SolidColorBrush)resources["ListBoxBackground"];
+                listBox.Foreground = (SolidColorBrush)resources["TextColor"];
+                listBox.BorderBrush = (SolidColorBrush)resources["BorderColor"];
+            }
+
+            // Update all TextBoxes
+            foreach (TextBox textBox in FindVisualChildren<TextBox>(this))
+            {
+                textBox.Background = (SolidColorBrush)resources["ControlBackground"];
+                textBox.Foreground = (SolidColorBrush)resources["TextColor"];
+                textBox.BorderBrush = (SolidColorBrush)resources["BorderColor"];
+            }
+
+            // Update all Buttons
+            foreach (Button button in FindVisualChildren<Button>(this))
+            {
+                if (button.Background != Brushes.Transparent) // Skip transparent buttons
+                {
+                    button.Background = (SolidColorBrush)resources["AccentColor"];
+                }
+                button.Foreground = (SolidColorBrush)resources["TextColor"];
+            }
+        }
+
+        private void UpdateTabItem(TabItem tab, ResourceDictionary resources)
+        {
+            if (tab.Content is Grid grid)
+            {
+                grid.Background = (SolidColorBrush)resources["ControlBackground"];
+                foreach (var child in grid.Children)
+                {
+                    if (child is TextBox textBox)
+                    {
+                        textBox.Background = (SolidColorBrush)resources["ControlBackground"];
+                        textBox.Foreground = (SolidColorBrush)resources["TextColor"];
+                        textBox.BorderBrush = (SolidColorBrush)resources["BorderColor"];
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<T> FindVisualChildren<T>(DependencyObject depObj) where T : DependencyObject
+        {
+            if (depObj != null)
+            {
+                for (int i = 0; i < VisualTreeHelper.GetChildrenCount(depObj); i++)
+                {
+                    DependencyObject child = VisualTreeHelper.GetChild(depObj, i);
+                    if (child != null && child is T)
+                    {
+                        yield return (T)child;
+                    }
+
+                    foreach (T childOfChild in FindVisualChildren<T>(child))
+                    {
+                        yield return childOfChild;
+                    }
+                }
+            }
+        }
+
+
+        private void ToggleTheme_Click(object sender, RoutedEventArgs e)
+        {
+            isDarkTheme = !isDarkTheme;
+            ApplyTheme(isDarkTheme);
+        }
 
     }
 }

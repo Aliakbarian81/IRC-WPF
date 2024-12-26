@@ -11,11 +11,16 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
-
+        <SolidColorBrush x:Key="WindowBackground" Color="#1E1E1E"/>
+        <SolidColorBrush x:Key="ControlBackground" Color="#2D2D2D"/>
+        <SolidColorBrush x:Key="TextColor" Color="#E0E0E0"/>
+        <SolidColorBrush x:Key="BorderColor" Color="#3F3F3F"/>
+        <SolidColorBrush x:Key="AccentColor" Color="#007ACC"/>
+        
         <!-- استایل دکمه ها -->
         <Style TargetType="Button">
-            <Setter Property="Background" Value="#007ACC"/>
-            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="{DynamicResource AccentColor}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextColor}"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Margin" Value="5"/>
             <Setter Property="Padding" Value="15,8"/>
@@ -41,14 +46,14 @@
 
         <!-- استایل تکست باکس ها -->
         <Style TargetType="TextBox">
-            <Setter Property="Background" Value="#2D2D2D"/>
-            <Setter Property="Foreground" Value="#E0E0E0"/>
+            <Setter Property="Background" Value="{DynamicResource ControlBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextColor}"/>
             <Setter Property="CaretBrush" Value="#E0E0E0"/>
             <Setter Property="Margin" Value="5"/>
             <Setter Property="Padding" Value="10"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush" Value="#3F3F3F"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderColor}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -134,7 +139,7 @@
         </Style>
     </Window.Resources>
 
-    <Grid>
+    <Grid Background="{DynamicResource WindowBackground}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -145,8 +150,8 @@
         </Grid.ColumnDefinitions>
 
         <!-- منو -->
-        <Menu Grid.ColumnSpan="2" Background="#2D2D2D">
-            <MenuItem Header="File" Foreground="#E0E0E0">
+        <Menu Grid.ColumnSpan="2" Background="{DynamicResource ControlBackground}">
+            <MenuItem Header="File" Foreground="{DynamicResource TextColor}">
                 <MenuItem Header="Connect to Server" 
                           Click="ConnectMenuItem_Click"
                           Background="#2D2D2D"
@@ -161,6 +166,12 @@
                           Click="ExitMenuItem_Click"
                           Background="#2D2D2D"
                           Foreground="#E0E0E0"/>
+            </MenuItem>
+            <MenuItem Header="View" Foreground="{DynamicResource TextColor}">
+                <MenuItem Header="Toggle Theme" 
+                  Click="ToggleTheme_Click"
+                  Background="{DynamicResource ControlBackground}"
+                  Foreground="{DynamicResource TextColor}"/>
             </MenuItem>
             <MenuItem Header="Help" Foreground="#E0E0E0">
                 <MenuItem Header="About" 
@@ -242,6 +253,10 @@
                         <ContextMenu Background="#2D2D2D">
                             <MenuItem Header="Join Channel" 
                                       Click="ChannelChatMenuItem_Click"
+                                      Background="#2D2D2D"
+                                      Foreground="#E0E0E0"/>
+                            <MenuItem Header="Send Channel Notice" 
+                                      Click="SendChannelNoticeMenuItem_Click"
                                       Background="#2D2D2D"
                                       Foreground="#E0E0E0"/>
                         </ContextMenu>

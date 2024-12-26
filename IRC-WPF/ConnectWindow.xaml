@@ -5,6 +5,7 @@
         Height="450" 
         Width="450" 
         Background="#1E1E1E" 
+        KeyDown="Window_KeyDown"
         WindowStartupLocation="CenterScreen">
 
     <Window.Resources>
