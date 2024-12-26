@@ -178,8 +178,42 @@ namespace IRC_WPF
             }
         }
 
-
         private async Task ConnectToServer(string server, int port, string nickname, string username = null, string password = null)
+        {
+            try
+            {
+                // ایجاد اتصال TCP
+                TcpClient client = new TcpClient(server, port);
+                NetworkStream stream = client.GetStream();
+                writer = new StreamWriter(stream) { AutoFlush = true };
+                reader = new StreamReader(stream);
+
+                // ارسال رمز عبور اگر وارد شده باشد
+                if (!string.IsNullOrEmpty(password))
+                {
+                    await writer.WriteLineAsync($"PASS {password}");
+                }
+
+                // ارسال نیک‌نیم
+                await writer.WriteLineAsync($"NICK {nickname}");
+
+                // ارسال دستور USER
+                string realName = username ?? nickname; // اگر یوزرنیم وارد نشده باشد، از نیک‌نیم استفاده می‌کنیم
+                await writer.WriteLineAsync($"USER {realName} 0 * :{realName}");
+
+                // شروع گوش دادن به پیام‌ها
+                _ = Task.Run(() => ListenForMessages());
+
+                MessageBox.Show("Connected to server successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to connect: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+
+        private async Task ConnectToServer3(string server, int port, string nickname, string username = null, string password = null)
         {
             try
             {
@@ -299,16 +333,18 @@ namespace IRC_WPF
             var connectWindow = new ConnectWindow();
             if (connectWindow.ShowDialog() == true)
             {
+                // گرفتن مقادیر از فرم
                 string serverAddress = connectWindow.ServerAddress;
                 int port = connectWindow.Port;
                 string nickname = connectWindow.Nickname;
-                string username = connectWindow.Username;
-                string password = connectWindow.Password;
+                string username = string.IsNullOrWhiteSpace(connectWindow.Username) ? null : connectWindow.Username;
+                string password = string.IsNullOrWhiteSpace(connectWindow.Password) ? null : connectWindow.Password;
 
+                // اتصال به سرور
                 await ConnectToServer(serverAddress, port, nickname, username, password);
-
             }
         }
+
 
 
         private void AppendMessageToTab(string header, string message)
