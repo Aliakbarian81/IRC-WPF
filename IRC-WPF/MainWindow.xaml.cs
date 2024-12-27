@@ -13,6 +13,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Windows.Input;
+using System.Text.Json;
 
 
 namespace IRC_WPF
@@ -242,49 +243,36 @@ namespace IRC_WPF
                             });
                         }
                     }
-                    if (response.Contains("PRIVMSG") && response.Contains("DCC SEND"))
+                    if (response.Contains("PRIVMSG") && response.Contains("TRANSFER_REQUEST"))
                     {
                         try
                         {
-                            // پردازش پیام DCC
                             string sender = GetUserFromResponse(response);
-                            int startIndex = response.IndexOf("DCC SEND") + 9;
-                            int endIndex = response.LastIndexOf("\u0001");
-                            if (endIndex == -1) endIndex = response.Length;
+                            int startIndex = response.IndexOf("TRANSFER_REQUEST") + 16;
+                            string jsonData = response.Substring(startIndex).Trim();
 
-                            string dccData = response.Substring(startIndex, endIndex - startIndex).Trim();
-                            string[] dccParams = dccData.Split(' ');
+                            var transferInfo = JsonSerializer.Deserialize<FileTransferInfo>(jsonData);
 
-                            if (dccParams.Length >= 4)
+                            Dispatcher.Invoke(() =>
                             {
-                                string fileName = dccParams[0];
-                                string ipAddressInt = dccParams[1];
-                                string port = dccParams[2];
-                                string fileSize = dccParams[3].Replace("\u0001", "");
+                                var result = MessageBox.Show(
+                                    $"Accept file '{transferInfo.FileName}' from {sender}?\nSize: {transferInfo.FileSize / 1024} KB",
+                                    "File Transfer Request",
+                                    MessageBoxButton.YesNo,
+                                    MessageBoxImage.Question
+                                );
 
-                                string ipAddress = IntegerToIP(long.Parse(ipAddressInt));
-
-                                Dispatcher.Invoke(() =>
+                                if (result == MessageBoxResult.Yes)
                                 {
-                                    var result = MessageBox.Show(
-                                        $"Accept file '{fileName}' from {sender}?\nSize: {long.Parse(fileSize) / 1024} KB",
-                                        "File Transfer Request",
-                                        MessageBoxButton.YesNo,
-                                        MessageBoxImage.Question
-                                    );
-
-                                    if (result == MessageBoxResult.Yes)
-                                    {
-                                        _ = ReceiveFileAsync(fileName, ipAddress, int.Parse(port), long.Parse(fileSize));
-                                    }
-                                });
-                            }
+                                    _ = ReceiveFileAsync(transferInfo);
+                                }
+                            });
                         }
                         catch (Exception ex)
                         {
                             Dispatcher.Invoke(() =>
                             {
-                                ChatBox.AppendText($"Error processing DCC request: {ex.Message}\n");
+                                ChatBox.AppendText($"Error processing transfer request: {ex.Message}\n");
                             });
                         }
                     }
@@ -746,9 +734,88 @@ namespace IRC_WPF
         }
 
 
+        public async Task SendFileRequestAsync(string filePath, string recipient)
+        {
+            TcpListener listener = null;
+            try
+            {
+                // پیدا کردن آی‌پی لوکال سیستم
+                string localIP = GetLocalIPAddress();
+                int port = 8001;
+
+                listener = new TcpListener(IPAddress.Parse(localIP), port);
+                listener.Start();
+
+                string fileName = Path.GetFileName(filePath);
+                long fileSize = new FileInfo(filePath).Length;
+
+                var transferInfo = new FileTransferInfo
+                {
+                    FileName = fileName,
+                    FileSize = fileSize,
+                    SenderName = Environment.MachineName,
+                    ReceiverName = recipient,
+                    SenderIP = localIP,
+                    Port = port
+                };
+
+                string transferRequest = $"TRANSFER_REQUEST {JsonSerializer.Serialize(transferInfo)}";
+                await writer.WriteLineAsync($"PRIVMSG {recipient} :{transferRequest}");
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"Waiting for {recipient} to accept file transfer...");
+                });
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+                using var client = await listener.AcceptTcpClientAsync().WaitAsync(cts.Token);
+                using var stream = client.GetStream();
+                using var fileStream = File.OpenRead(filePath);
+
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytesSent = 0;
+                var sw = Stopwatch.StartNew();
+
+                while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    await stream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesSent += bytesRead;
+
+                    if (sw.ElapsedMilliseconds > 500)
+                    {
+                        double progress = (double)totalBytesSent / fileSize * 100;
+                        Dispatcher.Invoke(() =>
+                        {
+                            AppendMessageToTab(recipient, $"Sending: {progress:F1}% complete");
+                        });
+                        sw.Restart();
+                    }
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"File {fileName} sent successfully!");
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    AppendMessageToTab(recipient, $"Error sending file: {ex.Message}");
+                    MessageBox.Show($"Error sending file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
+            }
+            finally
+            {
+                listener?.Stop();
+            }
+        }
+
+
 
         // ارسال فایل
-        public async Task SendFileRequestAsync(string filePath, string recipient)
+        public async Task SendFileRequestAsync2(string filePath, string recipient)
         {
             TcpListener listener = null;
             try
@@ -840,9 +907,76 @@ namespace IRC_WPF
         }
 
 
+        public async Task ReceiveFileAsync(FileTransferInfo transferInfo)
+        {
+            TcpClient client = null;
+            try
+            {
+                var saveDialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    FileName = transferInfo.FileName,
+                    DefaultExt = Path.GetExtension(transferInfo.FileName),
+                    Filter = "All files (*.*)|*.*"
+                };
+
+                bool? dialogResult = Dispatcher.Invoke(() => saveDialog.ShowDialog());
+                if (dialogResult != true) return;
+
+                string savePath = saveDialog.FileName;
+
+                client = new TcpClient();
+                await client.ConnectAsync(transferInfo.SenderIP, transferInfo.Port);
+
+                using var stream = client.GetStream();
+                using var fileStream = File.Create(savePath);
+
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                long totalBytesRead = 0;
+                var sw = Stopwatch.StartNew();
+
+                while (totalBytesRead < transferInfo.FileSize)
+                {
+                    bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
+                    if (bytesRead == 0) break;
+
+                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                    totalBytesRead += bytesRead;
+
+                    if (sw.ElapsedMilliseconds > 500)
+                    {
+                        double progress = (double)totalBytesRead / transferInfo.FileSize * 100;
+                        Dispatcher.Invoke(() =>
+                        {
+                            ChatBox.AppendText($"Receiving {Path.GetFileName(savePath)}: {progress:F1}% complete\n");
+                        });
+                        sw.Restart();
+                    }
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    ChatBox.AppendText($"File saved successfully to: {savePath}\n");
+                });
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    ChatBox.AppendText($"Error receiving file: {ex.Message}\n");
+                    MessageBox.Show($"Error receiving file: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                });
+            }
+            finally
+            {
+                client?.Close();
+                client?.Dispose();
+            }
+        }
+
 
         // دریافت فایل
-        public async Task ReceiveFileAsync(string fileName, string ipAddress, int port, long fileSize)
+        public async Task ReceiveFileAsync2(string fileName, string ipAddress, int port, long fileSize)
         {
             TcpClient client = null;
             try
@@ -985,18 +1119,20 @@ namespace IRC_WPF
             }
         }
 
+
         private string GetLocalIPAddress()
         {
             var host = Dns.GetHostEntry(Dns.GetHostName());
             foreach (var ip in host.AddressList)
             {
-                if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                if (ip.AddressFamily == AddressFamily.InterNetwork)
                 {
                     return ip.ToString();
                 }
             }
-            throw new Exception("No network adapters with an IPv4 address in the system!");
+            throw new Exception("Local IP Address not found!");
         }
+
 
         private void AddFirewallRule(int port)
         {
@@ -1251,4 +1387,18 @@ namespace IRC_WPF
         }
 
     }
+}
+
+
+
+
+
+public class FileTransferInfo
+{
+    public string FileName { get; set; }
+    public long FileSize { get; set; }
+    public string SenderName { get; set; }
+    public string ReceiverName { get; set; }
+    public string SenderIP { get; set; }
+    public int Port { get; set; }
 }
